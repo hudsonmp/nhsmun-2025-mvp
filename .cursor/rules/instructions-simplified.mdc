@@ -1,0 +1,126 @@
+---
+description: Simplified instructions
+globs: 
+---
+Optimized MVP Plan for Model UN Platform with Cursor
+
+1. Refining the Core MVP Scope
+
+Given the two-week deadline, we need to prioritize essential features that will have the highest impact with minimal development effort. The first iteration should focus on:
+
+Position Paper & Resolution Repository – Users should be able to upload, categorize, and search position papers and resolutions efficiently.
+
+AI Research Assistant – A chatbot that fetches relevant articles, country policies, UN documents, and provides quick summaries for better research.
+
+Speechwriting AI – Generates and refines speech drafts based on bullet points, templates, or guided prompts, helping users improve their public speaking skills.
+
+Recommendation System for Papers & Articles – Placeholder API (OpenAI/Gemini/Anthropic) until a more robust ML-based system can be developed post-MVP.
+
+Basic User Profiles – Users can create accounts, store papers, track their progress, and receive AI-generated feedback on their submissions.
+
+Document Formatting & Compliance Checker – An AI tool to check if position papers and resolutions align with standard formatting and guidelines used in MUN conferences.
+
+Networking and social features will come in later iterations, but initially, we will integrate Discord or another external app to facilitate interaction.
+
+2. Implementation Strategy Using Cursor
+
+Cursor will be the primary AI coding assistant to accelerate development. The approach is:
+
+Leverage AI for Code Generation: Cursor will generate boilerplate for Next.js components, Supabase integration, and API endpoints.
+
+Prompt-Based Development: Structured prompts will be used to refine output, ensuring efficient and clean code.
+
+Cursor as a Smart Debugger: It will flag performance bottlenecks, suggest optimizations, and recommend better libraries if needed.
+
+Automating Testing & Deployment: Cursor will generate unit tests and automate CI/CD pipelines for smoother deployment.
+
+Cursor’s workflow:
+
+Frontend (Next.js & TailwindCSS) – Use Cursor to generate reusable components and pages for the repository, research assistant, and speechwriting AI.
+
+Backend (Supabase & FastAPI) – Automate database setup, API endpoints, and authentication. (I am unfamiliar with Supabase, so initial setup guidance from Cursor is essential.)
+
+AI Feature Integration – Use OpenAI, Hugging Face, and Perplexity APIs for initial AI features, ensuring easy scaling later.
+
+3. Optimized Stack for Speed & Scalability
+
+Frontend: Next.js (React-based, optimized for performance and modularity)
+
+Backend: Supabase (for authentication, real-time database, and file storage)
+
+AI Models:
+
+Speechwriting AI: OpenAI GPT-4 / Anthropic Claude API
+
+Research Assistant: Perplexity AI API / Google Search API
+
+Recommendation Engine: Placeholder API (OpenAI embeddings or Cohere) until later ML-based solution
+
+Fine-Tuned Models: Custom fine-tuning will be done post-MVP using Hugging Face models (BERT, GPT-2, or T5)
+
+Document Formatting AI: LLM-based compliance checker to verify MUN document structure
+
+Hosting: Vercel (frontend), Supabase (backend), and Hugging Face (for AI models)
+
+CI/CD: GitHub Actions for automated testing and deployment
+
+4. MVP Development Timeline (2 Weeks)
+
+Week 1: Core Features
+
+Day 1: Setup Next.js, Supabase, and Vercel hosting, ensuring a stable foundation. Cursor will assist with Supabase setup.
+
+Day 2-3: Implement user authentication & profile system, allowing users to log in and track activity.
+
+Day 4-5: Develop document repository with structured categorization, search, and tagging system.
+
+Day 6: Integrate AI-powered speechwriting assistant and basic document compliance checker.
+
+Day 7: Deploy first iteration for testing, gather initial feedback, and refine core functionalities.
+
+Week 2: Enhancements & AI Features
+
+Day 8-9: Implement AI research assistant, optimizing queries and document retrieval.
+
+Day 10: Add placeholder recommendation engine for documents.
+
+Day 11-12: Fine-tune AI models to align with MUN-specific formatting, research, and speechwriting tasks.
+
+Day 13: Debug, optimize UI and API responses, prepare for live demo.
+
+Day 14: Conduct final testing, security checks, and execute soft launch for select users.
+
+5. AI Integration & Cost Control
+
+Prioritize Free Tiers: Utilize OpenAI’s free-tier credits, Supabase’s free-tier for hosting, and Hugging Face’s free model inference options.
+
+Optimize API Calls: Implement caching and response compression to reduce API usage costs for common queries.
+
+Apply for Credits: Explore Microsoft Azure credits to offset API costs.
+
+6. Key Development Best Practices
+
+Feature-by-Feature Approach: Focus on high-impact features first, then incrementally add enhancements.
+
+AI-Powered Debugging & Optimization: Use Cursor to analyze, debug, and refine code in real-time.
+
+User Testing & Iteration: Gather user feedback rapidly, iterate on UI/UX, and introduce improvements continuously.
+
+Automate as Much as Possible: Use AI to generate test cases, conduct security audits, and automate server management.
+
+7. Long-Term Roadmap (Post-MVP)
+
+After the MVP launch, future iterations will introduce:
+
+Networking Features – Delegate matching, discussion boards, real-time messaging (via third-party integrations first, then built-in later).
+
+Advanced AI Customization – User-specific AI assistants with saved research history.
+
+Gamification & User Incentives – Leaderboards, awards for top research papers, participation metrics.
+
+Expanding AI Capabilities – Implement NLP-powered position paper graders and automated feedback mechanisms.
+
+Conclusion: Efficient AI-Driven Development
+
+This MVP strategy optimizes for speed using AI coding assistants like Cursor, leverages low-code tools, and prioritizes essential features first. With a structured development approach, the Model UN platform can be ready within two weeks while remaining scalable for future expansions. By following best practices in AI integration, cost optimization, and feature prioritization, the platform will provide immense value to MUN students while being efficient and cost-effective to maintain.
+
