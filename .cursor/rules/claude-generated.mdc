@@ -1,0 +1,288 @@
+---
+description: Detailed rules
+globs: 
+---
+# MUN Connect Platform Implementation Plan
+
+## Overview
+
+This document outlines the detailed implementation plan for the MUN Connect platform MVP, focusing on delivering a functional product within a two-week timeline. The platform will provide Model UN delegates with tools for research, speechwriting, and document management.
+
+## Technical Stack
+
+### Frontend
+- **Framework**: Next.js (React)
+- **Styling**: TailwindCSS
+- **State Management**: React Context API (for MVP)
+- **Hosting**: Vercel
+
+### Backend
+- **Database/Auth**: Supabase
+- **Storage**: Supabase Storage
+- **API Layer**: Next.js API routes + Supabase functions
+
+### AI Components
+- **Research Assistant**: OpenAI API / Perplexity API
+- **Speechwriting**: Anthropic Claude API
+- **Document Formatting Checker**: OpenAI API
+- **Recommendation System**: OpenAI Embeddings API
+
+## Development Approach Using Cursor
+
+Cursor will accelerate development as an AI-powered coding assistant:
+
+1. **Boilerplate Generation**: Generate foundational code for components, database models, and API endpoints
+2. **Code Optimization**: Identify performance bottlenecks and suggest improvements
+3. **Testing Support**: Generate unit tests to ensure functionality
+4. **Documentation**: Generate code documentation and help with commenting
+5. **Debugging**: Help identify and fix bugs in development
+
+## MVP Feature Implementation Plan
+
+### Week 1: Core Features (Days 1-7)
+
+#### Day 1: Project Setup
+- Initialize Next.js project with TypeScript
+- Configure TailwindCSS
+- Set up Supabase project and connection
+- Configure Vercel deployment pipeline
+- Create project structure and repositories
+
+#### Day 2-3: Authentication & User Profiles
+- Implement Supabase Auth UI components
+- Create user profile schema
+- Build profile management UI
+- Add user settings page
+- Implement session management
+
+#### Day 4-5: Document Repository
+- Create document schema (position papers, resolutions)
+- Implement document upload functionality
+- Build document categorization system (committees, topics, countries)
+- Create search functionality with filters
+- Implement basic document viewer
+
+#### Day 6: AI-Powered Document Tools
+- Integrate document formatting checker
+- Implement basic recommendation system for documents
+- Add document formatting templates
+- Create document validation system
+
+#### Day 7: Testing & Refinement
+- Test core features
+- Fix bugs
+- Optimize performance
+- Deploy first stable version
+- Gather initial feedback
+
+### Week 2: AI Features & Enhancements (Days 8-14)
+
+#### Day 8-9: Research Assistant
+- Design and implement research assistant UI
+- Integrate with OpenAI/Perplexity API
+- Add context-aware prompt generation
+- Implement search history and saving functionality
+- Create citation generator
+
+#### Day 10-11: Speechwriting Assistant
+- Design speech editor interface
+- Implement AI-powered speech generation
+- Add speech templates for different MUN contexts
+- Create speech feedback functionality
+- Implement speech formatting options
+
+#### Day 12: Recommendation & Personalization
+- Enhance document recommendation system
+- Add personalized dashboard
+- Implement progress tracking
+- Create activity logs
+
+#### Day 13: Integration & Optimization
+- Ensure all components work together seamlessly
+- Optimize API calls and caching
+- Implement rate limiting
+- Add error handling and recovery
+- Fine-tune UI/UX based on testing
+
+#### Day 14: Final Testing & Launch
+- Conduct comprehensive testing
+- Fix remaining bugs
+- Optimize performance
+- Document known issues for future releases
+- Deploy MVP for limited user testing
+
+## API Integration Details
+
+### OpenAI API Integration
+```javascript
+// Example integration for AI Research Assistant
+async function researchTopic(topic, country, committee) {
+  const response = await fetch('/api/research', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      topic,
+      country,
+      committee,
+    }),
+  });
+  
+  return response.json();
+}
+
+// Server-side implementation
+export async function handler(req, res) {
+  const { topic, country, committee } = req.body;
+  
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      {
+        role: "system",
+        content: "You are a research assistant for Model UN delegates."
+      },
+      {
+        role: "user",
+        content: `Research the position of ${country} on ${topic} for the ${committee} committee.`
+      }
+    ],
+  });
+
+  res.status(200).json({ 
+    research: completion.choices[0].message.content 
+  });
+}
+```
+
+### Supabase Storage Integration
+```javascript
+// Document upload functionality
+async function uploadDocument(file, metadata) {
+  const { data, error } = await supabase.storage
+    .from('documents')
+    .upload(`${metadata.type}/${metadata.id}`, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+    
+  if (error) throw error;
+  
+  // Store metadata in database
+  const { data: docData, error: docError } = await supabase
+    .from('documents')
+    .insert([
+      {
+        id: metadata.id,
+        title: metadata.title,
+        type: metadata.type,
+        user_id: metadata.userId,
+        committee: metadata.committee,
+        country: metadata.country,
+        topic: metadata.topic,
+        storage_path: data.path,
+      }
+    ]);
+    
+  if (docError) throw docError;
+  
+  return docData;
+}
+```
+
+## Database Schema
+
+### Users Table
+```sql
+CREATE TABLE users (
+  id UUID REFERENCES auth.users NOT NULL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT,
+  avatar_url TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+```
+
+### Documents Table
+```sql
+CREATE TABLE documents (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  title TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('position_paper', 'resolution', 'speech', 'research')),
+  user_id UUID REFERENCES users(id) NOT NULL,
+  committee TEXT,
+  country TEXT,
+  topic TEXT,
+  storage_path TEXT NOT NULL,
+  is_public BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+```
+
+### Research Queries Table
+```sql
+CREATE TABLE research_queries (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) NOT NULL,
+  query TEXT NOT NULL,
+  committee TEXT,
+  country TEXT,
+  topic TEXT,
+  response TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
+);
+```
+
+## Cost Optimization Strategies
+
+1. **Implement Tiered API Access**:
+   - Set daily limits for AI feature usage on free accounts
+   - Cache common research queries to reduce duplicate API calls
+   - Compress responses to minimize token usage
+
+2. **Storage Optimization**:
+   - Implement file size limits for uploads
+   - Use compression for document storage
+   - Set reasonable storage limits per user
+
+3. **External Funding**:
+   - Apply for Microsoft for Startups credits
+   - Explore educational technology grants
+   - Prepare for potential AI research partnerships
+
+## Post-MVP Roadmap
+
+1. **Enhanced AI Features**:
+   - Custom fine-tuned models for MUN-specific content
+   - Advanced speech analytics and feedback
+   - Real-time collaboration on documents
+
+2. **Community Features**:
+   - Delegate matching for conferences
+   - Conference calendar and registration integration
+   - Peer feedback and review system
+
+3. **Educational Content**:
+   - Interactive MUN tutorials
+   - Committee-specific guides
+   - Conference preparation checklists
+
+4. **Advanced Analytics**:
+   - Personal performance analytics
+   - Skill development tracking
+   - Committee participation insights
+
+## Risk Mitigation
+
+1. **API Rate Limiting**: Implement queuing system for AI requests to prevent cost overruns
+2. **Fallback Systems**: Create degraded functionality modes if API services are unavailable
+3. **Data Security**: Implement proper encryption for document storage and user data
+4. **Scaling Issues**: Design with scalability in mind from the start, using serverless architecture
+5. **Development Delays**: Use Cursor efficiently to keep development on schedule
+
+## Conclusion
+
+This implementation plan provides a structured approach to delivering the MUN Connect platform MVP within the two-week timeframe. The focus on core features first, followed by AI enhancements, ensures that a valuable product can be delivered quickly while setting the foundation for future development.
