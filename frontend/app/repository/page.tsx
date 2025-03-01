@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Document, DocumentFilters } from '@/types/document';
 
 /**
  * Repository Page Component for MUN Connect
@@ -17,14 +18,14 @@ export default function RepositoryPage() {
   // State Management
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [documents, setDocuments] = useState([]);
-  const [filters, setFilters] = useState({
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [filters, setFilters] = useState<DocumentFilters>({
     type: 'all',
     committee: 'all',
     country: 'all',
     searchQuery: '',
   });
-  const [selectedDoc, setSelectedDoc] = useState(null);
+  const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [showFormatCheck, setShowFormatCheck] = useState(false);
 
   // Mock data for development and demos
@@ -32,7 +33,7 @@ export default function RepositoryPage() {
   const countries = ['United States', 'China', 'Russia', 'United Kingdom', 'France', 'Germany', 'India', 'Brazil'];
   
   // Sample documents data
-  const mockDocuments = [
+  const mockDocuments: Document[] = [
     {
       id: '1',
       title: 'Climate Change Position Paper',
@@ -41,7 +42,7 @@ export default function RepositoryPage() {
       country: 'Sweden',
       topic: 'Climate Change',
       created_at: '2025-02-15T12:00:00Z',
-      user: { name: 'Alex Johnson' },
+      user: { id: '101', email: 'alex@example.com', username: 'alexj', name: 'Alex Johnson' },
       format_status: 'valid',
     },
     {
@@ -52,7 +53,7 @@ export default function RepositoryPage() {
       country: 'Germany',
       topic: 'Refugee Rights',
       created_at: '2025-02-10T14:30:00Z',
-      user: { name: 'Sarah Park' },
+      user: { id: '102', email: 'sarah@example.com', username: 'sarahp', name: 'Sarah Park' },
       format_status: 'valid',
     },
     {
@@ -63,7 +64,7 @@ export default function RepositoryPage() {
       country: 'Japan',
       topic: 'Nuclear Disarmament',
       created_at: '2025-02-08T09:15:00Z',
-      user: { name: 'Raj Patel' },
+      user: { id: '103', email: 'raj@example.com', username: 'rajp', name: 'Raj Patel' },
       format_status: 'issues',
     },
     {
@@ -74,7 +75,7 @@ export default function RepositoryPage() {
       country: 'Brazil',
       topic: 'Economic Development',
       created_at: '2025-02-05T16:45:00Z',
-      user: { name: 'Maria Rodriguez' },
+      user: { id: '104', email: 'maria@example.com', username: 'mariar', name: 'Maria Rodriguez' },
       format_status: 'valid',
     },
     {
@@ -85,7 +86,7 @@ export default function RepositoryPage() {
       country: 'France',
       topic: 'Pandemic Preparedness',
       created_at: '2025-02-01T11:30:00Z',
-      user: { name: 'Jean Dupont' },
+      user: { id: '105', email: 'jean@example.com', username: 'jeand', name: 'Jean Dupont' },
       format_status: 'issues',
     },
   ];
@@ -117,7 +118,7 @@ export default function RepositoryPage() {
   };
 
   // Apply filters to documents
-  const filteredDocuments = documents.filter((doc: any) => {
+  const filteredDocuments = documents.filter((doc: Document) => {
     return (
       (filters.type === 'all' || doc.type === filters.type) &&
       (filters.committee === 'all' || doc.committee === filters.committee) &&
@@ -129,7 +130,7 @@ export default function RepositoryPage() {
   });
 
   // Handle document selection
-  const handleDocumentClick = (doc: any) => {
+  const handleDocumentClick = (doc: Document) => {
     setSelectedDoc(doc);
   };
 
@@ -147,13 +148,13 @@ export default function RepositoryPage() {
         // Update the selected document with format check results
         const updatedDoc = { 
           ...selectedDoc, 
-          format_status: Math.random() > 0.5 ? 'valid' : 'issues' 
+          format_status: Math.random() > 0.5 ? 'valid' : 'issues' as 'valid' | 'issues'
         };
         setSelectedDoc(updatedDoc);
         
         // Also update in the documents list
-        setDocuments((docs: any) => 
-          docs.map((d: any) => d.id === updatedDoc.id ? updatedDoc : d)
+        setDocuments((docs) => 
+          docs.map((d) => d.id === updatedDoc.id ? updatedDoc : d)
         );
       }
     }, 2000);
@@ -340,7 +341,7 @@ export default function RepositoryPage() {
                 </div>
               ) : (
                 <ul className="divide-y divide-gray-200">
-                  {filteredDocuments.map((doc: any) => (
+                  {filteredDocuments.map((doc) => (
                     <DocumentListItem 
                       key={doc.id}
                       document={doc}
@@ -477,7 +478,7 @@ export default function RepositoryPage() {
  * Displays a single document in the list with its metadata
  */
 function DocumentListItem({ document, isSelected, onClick }: {
-  document: any;
+  document: Document;
   isSelected: boolean;
   onClick: () => void;
 }) {
