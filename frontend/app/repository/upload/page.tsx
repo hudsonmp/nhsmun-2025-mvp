@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { documentsAPI } from '@/lib/api';
+import { loadGoogleApi, isGoogleAuthenticated, signInWithGoogle, listDriveFiles, downloadDriveFile, checkGoogleDriveConfig } from '@/lib/googleDrive';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -21,10 +22,60 @@ export default function UploadPage() {
   const [selectedDriveFile, setSelectedDriveFile] = useState<any>(null);
   const [driveSearchQuery, setDriveSearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [diagnosticResults, setDiagnosticResults] = useState<any>(null);
+  const [manualCredentialsModalOpen, setManualCredentialsModalOpen] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState('');
+  const [manualClientId, setManualClientId] = useState('');
 
   // Mock committees and countries for the demo
   const committees = ['UNSC', 'UNHRC', 'UNEP', 'DISEC', 'WHO', 'ECOSOC'];
   const countries = ['United States', 'China', 'Russia', 'United Kingdom', 'France', 'Germany', 'India', 'Brazil', 'Sweden', 'South Africa', 'Japan', 'Mexico'];
+
+  // Initialize Google API
+  useEffect(() => {
+    // Load Google API when component mounts
+    const initGoogleApi = async () => {
+      try {
+        console.log('Initializing Google API...');
+        
+        // Check if we have credentials in session storage from a previous manual initialization
+        const manualApiKey = sessionStorage.getItem('MANUAL_GOOGLE_API_KEY');
+        const manualClientId = sessionStorage.getItem('MANUAL_GOOGLE_CLIENT_ID');
+        
+        // Use manual credentials if available
+        const useManualCredentials = !!(manualApiKey && manualClientId);
+        
+        await loadGoogleApi(useManualCredentials);
+        console.log('Google API initialized successfully');
+        
+        // Log additional information about authentication state
+        if (window.gapi && window.gapi.auth2) {
+          const authInstance = window.gapi.auth2.getAuthInstance();
+          console.log('Authentication state after initialization:', {
+            authInstanceExists: !!authInstance,
+            isSignedIn: authInstance ? authInstance.isSignedIn.get() : false
+          });
+          
+          // Add listener to track sign-in state changes
+          if (authInstance) {
+            authInstance.isSignedIn.listen((signedIn: boolean) => {
+              console.log(`Google sign-in state changed: ${signedIn ? 'signed in' : 'signed out'}`);
+            });
+          }
+        }
+      } catch (error: any) {
+        console.error('Error initializing Google API:', {
+          message: error.message, 
+          name: error.name,
+          stack: error.stack,
+          source: 'initGoogleApi useEffect'
+        });
+        setError(`Failed to initialize Google API: ${error.message || 'Unknown error'}`);
+      }
+    };
+
+    initGoogleApi();
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -81,54 +132,112 @@ export default function UploadPage() {
 
   const fetchGoogleDriveFiles = async () => {
     setIsLoadingDriveFiles(true);
+    setError('');
     
     try {
-      // In a real implementation, this would make an API call to Google Drive API
-      // For demo purposes, we'll use mock data
-      setTimeout(() => {
-        const mockFiles = [
-          { id: 'file1', name: 'Position Paper - UNSC.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedTime: '2025-01-15T10:30:00Z' },
-          { id: 'file2', name: 'Climate Change - UNEP.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedTime: '2025-01-10T14:45:00Z' },
-          { id: 'file3', name: 'Human Rights Position - UNHRC.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedTime: '2025-01-05T09:15:00Z' },
-          { id: 'file4', name: 'Nuclear Disarmament - DISEC.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedTime: '2025-01-01T16:20:00Z' },
-          { id: 'file5', name: 'Global Health Crisis - WHO.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', modifiedTime: '2024-12-28T11:50:00Z' },
-        ];
-        setGoogleDriveFiles(mockFiles);
-        setIsLoadingDriveFiles(false);
-      }, 1000);
-    } catch (error) {
-      console.error('Error fetching Google Drive files:', error);
+      // Check if Google API is loaded properly
+      if (!window.gapi || !window.gapi.auth2) {
+        console.log('Google API not fully loaded, initializing...');
+        await loadGoogleApi();
+      }
+      
+      // Check if signed in to Google
+      if (!isGoogleAuthenticated()) {
+        console.log('User not signed in to Google, showing sign-in prompt...');
+        setError('Please sign in to Google to access your Drive files');
+        
+        // Create the auth instance if it doesn't exist
+        if (!window.gapi.auth2.getAuthInstance()) {
+          await new Promise((resolve) => {
+            window.gapi.auth2.init({
+              client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            }).then(resolve);
+          });
+        }
+        
+        // Show the Google sign-in popup with explicit user interaction
+        const user = await window.gapi.auth2.getAuthInstance().signIn({
+          prompt: 'select_account', // Force account selection
+          ux_mode: 'popup' // Use popup for better user experience
+        });
+        
+        if (!user) {
+          throw new Error('Google sign-in was cancelled or failed');
+        }
+        
+        console.log('Successfully signed in to Google');
+      }
+      
+      // Make sure Drive API is loaded
+      if (!window.gapi.client.drive) {
+        console.log('Loading Google Drive API...');
+        await new Promise((resolve, reject) => {
+          window.gapi.client.load('drive', 'v3', resolve);
+        });
+      }
+      
+      // Get files from Google Drive
+      console.log('Fetching files from Google Drive...');
+      const files = await listDriveFiles(driveSearchQuery);
+      setGoogleDriveFiles(files as any[]);
+      console.log('Successfully fetched Google Drive files');
+    } catch (error: any) {
+      // Detailed error logging
+      console.error('Error fetching Google Drive files:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack
+      });
+      
+      // Show a more specific error message to the user
+      setError(`Failed to access Google Drive: ${error.message || 'Unknown error'}`);
+    } finally {
       setIsLoadingDriveFiles(false);
     }
   };
 
-  const selectDriveFile = (file: any) => {
-    setSelectedDriveFile(file);
-    setShowGoogleDriveModal(false);
-    
-    // Auto-fill form fields based on file name if possible
-    const fileName = file.name;
-    
-    // Try to extract information from file name
-    // This is a simple implementation and would need to be more robust in a real app
-    committees.forEach(comm => {
-      if (fileName.includes(comm)) {
-        setCommittee(comm);
+  const selectDriveFile = async (file: any) => {
+    try {
+      // For document formats, we may want to download the content
+      if (file.mimeType.includes('document') || 
+          file.mimeType.includes('pdf') || 
+          file.mimeType.includes('text')) {
+        
+        const fileBlob = await downloadDriveFile(file.id);
+        const newFile = new File([fileBlob], file.name, { type: file.mimeType });
+        setFile(newFile);
       }
-    });
-    
-    countries.forEach(ctry => {
-      if (fileName.includes(ctry)) {
-        setCountry(ctry);
+      
+      setSelectedDriveFile(file);
+      setShowGoogleDriveModal(false);
+      
+      // Auto-fill form fields based on file name if possible
+      const fileName = file.name;
+      
+      // Try to extract information from file name
+      // This is a simple implementation and would need to be more robust in a real app
+      committees.forEach(comm => {
+        if (fileName.includes(comm)) {
+          setCommittee(comm);
+        }
+      });
+      
+      countries.forEach(ctry => {
+        if (fileName.includes(ctry)) {
+          setCountry(ctry);
+        }
+      });
+      
+      if (fileName.includes('Position Paper')) {
+        setDocumentType('position_paper');
+      } else if (fileName.includes('Resolution')) {
+        setDocumentType('resolution');
+      } else if (fileName.includes('Speech')) {
+        setDocumentType('speech');
       }
-    });
-    
-    if (fileName.includes('Position Paper')) {
-      setDocumentType('position_paper');
-    } else if (fileName.includes('Resolution')) {
-      setDocumentType('resolution');
-    } else if (fileName.includes('Speech')) {
-      setDocumentType('speech');
+    } catch (error) {
+      console.error('Error selecting Drive file:', error);
+      setError('Failed to retrieve file from Google Drive.');
     }
   };
 
@@ -137,6 +246,245 @@ export default function UploadPage() {
         file.name.toLowerCase().includes(driveSearchQuery.toLowerCase())
       )
     : googleDriveFiles;
+
+  // Add diagnostic function
+  const runGoogleDriveDiagnostics = async () => {
+    try {
+      setError('Running diagnostics...');
+      const diagnostics = await checkGoogleDriveConfig();
+      console.log('Google Drive Diagnostics:', diagnostics);
+      setDiagnosticResults(diagnostics);
+      
+      if (diagnostics.errors.length > 0) {
+        setError(`Google Drive issues found: ${diagnostics.errors.join(', ')}`);
+      } else {
+        setError('Google Drive configuration looks good. Try signing out and in again.');
+      }
+    } catch (error: any) {
+      console.error('Error running diagnostics:', error);
+      setError(`Failed to run diagnostics: ${error.message}`);
+    }
+  };
+
+  const initializeWithManualCredentials = useCallback(async () => {
+    if (!manualApiKey || !manualClientId) {
+      setError('Please provide both API Key and Client ID');
+      return;
+    }
+    
+    try {
+      setError('Initializing with manual credentials...');
+      
+      // Store the current gapi state before resetting
+      const currentGapi = window.gapi;
+      
+      // Reset gapi to force reinitialization
+      window.gapi = undefined as any;
+      
+      // Store credentials in sessionStorage to make them available to googleDrive.ts
+      sessionStorage.setItem('MANUAL_GOOGLE_API_KEY', manualApiKey);
+      sessionStorage.setItem('MANUAL_GOOGLE_CLIENT_ID', manualClientId);
+      
+      // Re-initialize
+      await loadGoogleApi(true); // Pass true to indicate using manual credentials
+      
+      // Run diagnostics
+      const diagnostics = await checkGoogleDriveConfig();
+      setDiagnosticResults(diagnostics);
+      
+      if (diagnostics.errors.length > 0) {
+        setError(`Still have issues after manual initialization: ${diagnostics.errors.join(', ')}`);
+      } else {
+        setError('Manual initialization successful!');
+        setManualCredentialsModalOpen(false);
+      }
+    } catch (error: any) {
+      console.error('Error in manual initialization:', error);
+      setError(`Manual initialization failed: ${error.message}`);
+      // Restore old gapi if needed
+      if (window.gapi === undefined) {
+        window.gapi = {} as any;
+      }
+    }
+  }, [manualApiKey, manualClientId]);
+
+  // Add a new verification function
+  const verifyGoogleAuthStatus = () => {
+    const authDetails: any = {
+      status: 'Checking authentication status...',
+      gapiLoaded: false,
+      auth2Loaded: false,
+      authInstance: null,
+      isSignedIn: false,
+      currentUser: null,
+      tokenInfo: null,
+      errors: []
+    };
+    
+    try {
+      // Check if gapi is loaded
+      authDetails.gapiLoaded = !!window.gapi;
+      if (!authDetails.gapiLoaded) {
+        authDetails.errors.push('Google API (gapi) is not loaded');
+        authDetails.status = 'Failed - Google API not loaded';
+        return authDetails;
+      }
+      
+      // Check if auth2 is loaded
+      authDetails.auth2Loaded = !!window.gapi.auth2;
+      if (!authDetails.auth2Loaded) {
+        authDetails.errors.push('Google Auth2 API is not loaded');
+        authDetails.status = 'Failed - Auth2 API not loaded';
+        return authDetails;
+      }
+      
+      // Check if auth instance exists
+      try {
+        const authInstance = window.gapi.auth2.getAuthInstance();
+        authDetails.authInstance = !!authInstance;
+        
+        if (!authInstance) {
+          authDetails.errors.push('Google Auth instance does not exist');
+          authDetails.status = 'Failed - No auth instance';
+          return authDetails;
+        }
+        
+        // Check if user is signed in
+        authDetails.isSignedIn = authInstance.isSignedIn.get();
+        
+        if (!authDetails.isSignedIn) {
+          authDetails.errors.push('User is not signed in to Google');
+          authDetails.status = 'Failed - Not signed in';
+          return authDetails;
+        }
+        
+        // Get user information
+        const currentUser = authInstance.currentUser.get();
+        const profile = currentUser.getBasicProfile();
+        authDetails.currentUser = {
+          id: profile.getId(),
+          name: profile.getName(),
+          email: profile.getEmail(),
+          scopes: currentUser.getGrantedScopes()
+        };
+        
+        // Check if token exists
+        try {
+          const token = window.gapi.auth.getToken();
+          authDetails.tokenInfo = {
+            exists: !!token,
+            accessToken: token ? `${token.access_token.substring(0, 10)}...` : null,
+            expiresAt: token ? new Date(token.expires_at).toISOString() : null,
+            expiresIn: token ? Math.floor((token.expires_at - Date.now()) / 1000) : null
+          };
+          
+          if (!token || !token.access_token) {
+            authDetails.errors.push('No valid auth token found');
+          } else if (token.expires_at < Date.now()) {
+            authDetails.errors.push('Auth token has expired');
+          }
+        } catch (e: any) {
+          authDetails.errors.push(`Error checking token: ${e.message}`);
+        }
+        
+        // Check if user has necessary scopes
+        const requiredScopes = [
+          'https://www.googleapis.com/auth/drive.file',
+          'https://www.googleapis.com/auth/drive.readonly'
+        ];
+        
+        const missingScopes = requiredScopes.filter(scope => 
+          !authDetails.currentUser.scopes.includes(scope)
+        );
+        
+        if (missingScopes.length > 0) {
+          authDetails.errors.push(`Missing required scopes: ${missingScopes.join(', ')}`);
+        }
+        
+        authDetails.status = authDetails.errors.length === 0 ? 
+          'Success - Fully authenticated' : 
+          'Partial - Authentication issues found';
+          
+      } catch (e: any) {
+        authDetails.errors.push(`Error accessing auth instance: ${e.message}`);
+        authDetails.status = 'Failed - Auth instance error';
+      }
+    } catch (e: any) {
+      authDetails.errors.push(`Unexpected error: ${e.message}`);
+      authDetails.status = 'Failed - Unexpected error';
+    }
+    
+    console.log('Google Auth Verification:', authDetails);
+    return authDetails;
+  };
+
+  // Enhance sign-in function to provide more details
+  const signInToGoogleExplicitly = async () => {
+    setError('');
+    try {
+      console.log('Starting explicit Google sign-in process...');
+      
+      // Make sure API is loaded
+      if (!window.gapi || !window.gapi.auth2) {
+        console.log('Google API not fully loaded, initializing...');
+        await loadGoogleApi();
+      }
+      
+      // Log pre-auth state
+      console.log('Pre-auth state:', verifyGoogleAuthStatus());
+      
+      // Create the auth instance if it doesn't exist
+      if (!window.gapi.auth2.getAuthInstance()) {
+        console.log('Auth instance does not exist, creating...');
+        await new Promise((resolve, reject) => {
+          window.gapi.auth2.init({
+            client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+          }).then(resolve).catch(reject);
+        });
+      }
+      
+      // Show the Google sign-in popup with all options explicitly set
+      console.log('Showing Google sign-in popup...');
+      const googleUser = await window.gapi.auth2.getAuthInstance().signIn({
+        prompt: 'select_account', // Force account selection
+        ux_mode: 'popup', // Use popup for better user experience
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly'
+      });
+      
+      // Log successful sign-in details
+      if (googleUser) {
+        const profile = googleUser.getBasicProfile();
+        console.log('Successfully signed in to Google as:', {
+          id: profile.getId(),
+          name: profile.getName(),
+          email: profile.getEmail(),
+          imageUrl: profile.getImageUrl()
+        });
+      }
+      
+      // Log post-auth state
+      const postAuthState = verifyGoogleAuthStatus();
+      console.log('Post-auth state:', postAuthState);
+      setDiagnosticResults(postAuthState);
+      
+      // Refresh the list of files if authentication is successful
+      if (postAuthState.isSignedIn) {
+        fetchGoogleDriveFiles();
+      } else {
+        throw new Error('Sign-in process completed but user is still not signed in');
+      }
+    } catch (error: any) {
+      console.error('Error signing in to Google:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack
+      });
+      setError(`Failed to sign in to Google: ${error.message || 'Unknown error'}`);
+      
+      // Run diagnostics even on error
+      setDiagnosticResults(verifyGoogleAuthStatus());
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -396,6 +744,24 @@ export default function UploadPage() {
                         />
                       </div>
                       
+                      {!isGoogleAuthenticated() && (
+                        <div className="mb-4 flex justify-center">
+                          <button
+                            type="button"
+                            onClick={signInToGoogleExplicitly}
+                            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          >
+                            <svg viewBox="0 0 24 24" className="w-5 h-5 mr-2">
+                              <path
+                                fill="#FFFFFF"
+                                d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z"
+                              />
+                            </svg>
+                            Sign in to Google Drive
+                          </button>
+                        </div>
+                      )}
+                      
                       {isLoadingDriveFiles ? (
                         <div className="flex justify-center py-6">
                           <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -404,35 +770,91 @@ export default function UploadPage() {
                           </svg>
                         </div>
                       ) : (
-                        <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-md">
-                          {filteredDriveFiles.length > 0 ? (
-                            <ul className="divide-y divide-gray-200">
-                              {filteredDriveFiles.map((file) => (
-                                <li key={file.id} className="px-4 py-3 hover:bg-gray-50">
-                                  <button
-                                    type="button"
-                                    className="w-full text-left"
-                                    onClick={() => selectDriveFile(file)}
-                                  >
-                                    <div className="flex items-center">
-                                      <svg className="h-5 w-5 text-gray-400 mr-3" fill="currentColor" viewBox="0 0 20 20">
-                                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                                      </svg>
-                                      <div>
-                                        <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                                        <p className="text-xs text-gray-500">{new Date(file.modifiedTime).toLocaleDateString()}</p>
-                                      </div>
-                                    </div>
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <div className="px-4 py-6 text-center text-gray-500">
-                              No files found matching your search
+                        <>
+                          {/* Verification Button */}
+                          <div className="flex justify-end mb-4">
+                            <button
+                              type="button"
+                              onClick={() => setDiagnosticResults(verifyGoogleAuthStatus())}
+                              className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none"
+                            >
+                              <svg className="h-4 w-4 mr-1 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Verify Auth Status
+                            </button>
+                          </div>
+                          
+                          {/* Show diagnostic results if available */}
+                          {diagnosticResults && (
+                            <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-md text-xs">
+                              <h4 className="font-medium mb-1">Auth Diagnostics:</h4>
+                              <div className="space-y-1">
+                                <p><span className="font-medium">Status:</span> {diagnosticResults.status}</p>
+                                <p><span className="font-medium">Google API Loaded:</span> {diagnosticResults.gapiLoaded ? '✓' : '❌'}</p>
+                                <p><span className="font-medium">Auth2 Loaded:</span> {diagnosticResults.auth2Loaded ? '✓' : '❌'}</p>
+                                <p><span className="font-medium">Auth Instance:</span> {diagnosticResults.authInstance ? '✓' : '❌'}</p>
+                                <p><span className="font-medium">Signed In:</span> {diagnosticResults.isSignedIn ? '✓' : '❌'}</p>
+                                
+                                {diagnosticResults.currentUser && (
+                                  <div>
+                                    <p><span className="font-medium">User:</span> {diagnosticResults.currentUser.name} ({diagnosticResults.currentUser.email})</p>
+                                  </div>
+                                )}
+                                
+                                {diagnosticResults.tokenInfo && (
+                                  <div>
+                                    <p><span className="font-medium">Token:</span> {diagnosticResults.tokenInfo.exists ? '✓' : '❌'}</p>
+                                    {diagnosticResults.tokenInfo.expiresIn && (
+                                      <p><span className="font-medium">Expires:</span> {diagnosticResults.tokenInfo.expiresIn} seconds</p>
+                                    )}
+                                  </div>
+                                )}
+                                
+                                {diagnosticResults.errors && diagnosticResults.errors.length > 0 && (
+                                  <div className="mt-1">
+                                    <p className="font-medium text-red-600">Errors:</p>
+                                    <ul className="list-disc pl-4 text-red-600">
+                                      {diagnosticResults.errors.map((err: string, i: number) => (
+                                        <li key={i}>{err}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
-                        </div>
+                        
+                          <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-md">
+                            {filteredDriveFiles.length > 0 ? (
+                              <ul className="divide-y divide-gray-200">
+                                {filteredDriveFiles.map((file) => (
+                                  <li key={file.id} className="px-4 py-3 hover:bg-gray-50">
+                                    <button
+                                      type="button"
+                                      className="w-full text-left"
+                                      onClick={() => selectDriveFile(file)}
+                                    >
+                                      <div className="flex items-center">
+                                        <svg className="h-5 w-5 text-gray-400 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                                        </svg>
+                                        <div>
+                                          <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                                          <p className="text-xs text-gray-500">{new Date(file.modifiedTime).toLocaleDateString()}</p>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div className="px-4 py-6 text-center text-gray-500">
+                                No files found matching your search
+                              </div>
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -441,8 +863,147 @@ export default function UploadPage() {
               <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                 <button
                   type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-green-500 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={() => setManualCredentialsModalOpen(true)}
+                >
+                  Manual Credentials
+                </button>
+                <button
+                  type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-blue-500 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={runGoogleDriveDiagnostics}
+                >
+                  Run Diagnostics
+                </button>
+                <button
+                  type="button"
                   className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                   onClick={() => setShowGoogleDriveModal(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+              {diagnosticResults && (
+                <div className="px-4 py-3 bg-gray-100 border-t border-gray-200 max-h-60 overflow-auto">
+                  <h3 className="text-lg font-medium text-gray-900">Diagnostic Results</h3>
+                  <div className="mt-2">
+                    <h4 className="font-medium">Configuration Status:</h4>
+                    <ul className="list-disc pl-5 text-sm text-gray-600">
+                      <li>API Key: {diagnosticResults.configStatus.apiKey}</li>
+                      <li>Client ID: {diagnosticResults.configStatus.clientId}</li>
+                    </ul>
+                    
+                    <h4 className="font-medium mt-2">API Status:</h4>
+                    <ul className="list-disc pl-5 text-sm text-gray-600">
+                      <li>GAPI Loaded: {diagnosticResults.apiStatus.gapiLoaded ? '✅' : '❌'}</li>
+                      <li>Client Loaded: {diagnosticResults.apiStatus.clientLoaded ? '✅' : '❌'}</li>
+                      <li>Auth Loaded: {diagnosticResults.apiStatus.authLoaded ? '✅' : '❌'}</li>
+                      <li>Drive Loaded: {diagnosticResults.apiStatus.driveLoaded ? '✅' : '❌'}</li>
+                      <li>Signed In: {diagnosticResults.apiStatus.isSignedIn ? '✅' : '❌'}</li>
+                      {diagnosticResults.apiStatus.user && (
+                        <li>User: {diagnosticResults.apiStatus.user.name} ({diagnosticResults.apiStatus.user.email})</li>
+                      )}
+                      {diagnosticResults.apiStatus.hasValidToken !== undefined && (
+                        <li>Valid Token: {diagnosticResults.apiStatus.hasValidToken ? '✅' : '❌'}</li>
+                      )}
+                      {diagnosticResults.apiStatus.tokenExpiry && (
+                        <li>Token Expiry: {diagnosticResults.apiStatus.tokenExpiry}</li>
+                      )}
+                      {diagnosticResults.apiStatus.hasFileScope !== undefined && (
+                        <li>Has Drive File Scope: {diagnosticResults.apiStatus.hasFileScope ? '✅' : '❌'}</li>
+                      )}
+                      {diagnosticResults.apiStatus.hasReadScope !== undefined && (
+                        <li>Has Drive Read Scope: {diagnosticResults.apiStatus.hasReadScope ? '✅' : '❌'}</li>
+                      )}
+                    </ul>
+                    
+                    {diagnosticResults.apiTests && (
+                      <>
+                        <h4 className="font-medium mt-2">API Tests:</h4>
+                        <ul className="list-disc pl-5 text-sm text-gray-600">
+                          {diagnosticResults.apiTests.listFilesSuccess !== undefined && (
+                            <li>List Files Test: {diagnosticResults.apiTests.listFilesSuccess ? '✅ Success' : '❌ Failed'}</li>
+                          )}
+                          {diagnosticResults.apiTests.listFilesError && (
+                            <li>Error: {diagnosticResults.apiTests.listFilesError.message}</li>
+                          )}
+                        </ul>
+                      </>
+                    )}
+                    
+                    {diagnosticResults.errors.length > 0 && (
+                      <>
+                        <h4 className="font-medium mt-2 text-red-600">Errors:</h4>
+                        <ul className="list-disc pl-5 text-sm text-red-600">
+                          {diagnosticResults.errors.map((error: string, index: number) => (
+                            <li key={index}>{error}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualCredentialsModalOpen && (
+        <div className="fixed z-20 inset-0 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <h3 className="text-lg leading-6 font-medium text-gray-900">
+                  Manual Google API Credentials
+                </h3>
+                <div className="mt-2">
+                  <p className="text-sm text-gray-500 mb-4">
+                    Enter your Google API credentials manually. This can help if your environment variables aren't being loaded correctly.
+                  </p>
+                  <div className="mb-4">
+                    <label htmlFor="manualApiKey" className="block text-sm font-medium text-gray-700">
+                      Google API Key
+                    </label>
+                    <input
+                      type="text"
+                      id="manualApiKey"
+                      className="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                      value={manualApiKey}
+                      onChange={(e) => setManualApiKey(e.target.value)}
+                      placeholder="Enter your Google API Key"
+                    />
+                  </div>
+                  <div className="mb-4">
+                    <label htmlFor="manualClientId" className="block text-sm font-medium text-gray-700">
+                      Google Client ID
+                    </label>
+                    <input
+                      type="text"
+                      id="manualClientId"
+                      className="mt-1 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                      value={manualClientId}
+                      onChange={(e) => setManualClientId(e.target.value)}
+                      placeholder="Enter your Google Client ID"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={initializeWithManualCredentials}
+                >
+                  Initialize
+                </button>
+                <button
+                  type="button"
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                  onClick={() => setManualCredentialsModalOpen(false)}
                 >
                   Cancel
                 </button>

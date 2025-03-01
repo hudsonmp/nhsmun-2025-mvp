@@ -24,8 +24,16 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local env files
-.env*.local
 .env
+.env*.local
+.env.development
+.env.test
+.env.production
+*/.env
+*/.env.*
+*/.env*.local
+backend/.env*
+frontend/.env*
 
 # Vercel
 .vercel
@@ -55,7 +63,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.env
 .venv
 venv/
 ENV/ 

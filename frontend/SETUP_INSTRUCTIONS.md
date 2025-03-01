@@ -224,6 +224,19 @@ Set up Row Level Security policies to secure your data:
      - User support email: Your email
      - Developer contact information: Your email
    - Click "Save and Continue"
+   
+   **Important**: When setting up your OAuth credentials, you'll need to configure:
+   
+   - **Authorized JavaScript origins**: These are the domains that can request OAuth authentication
+     - `http://localhost:3000` (for local development)
+     - Your production domain (e.g., `https://your-app-name.vercel.app`)
+     - Any other environments (staging, testing, etc.)
+   
+   - **Authorized redirect URIs**: These are the callback URLs after authentication
+     - `http://localhost:3000/auth/callback` (for handling auth flow)
+     - `http://localhost:3000/repository/upload` (for Google Drive uploads)
+     - `http://localhost:3000` (for general app redirects)
+     - Equivalent paths for your production domains
 
 2. **Add Scopes**
    - Click "Add or Remove Scopes"

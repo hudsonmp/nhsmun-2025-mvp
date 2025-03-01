@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Document, DocumentFilters } from '@/types/document';
+import { documentsAPI } from '@/lib/api';
+import { loadGoogleApi, isGoogleAuthenticated, signInWithGoogle, signOutFromGoogle, listDriveFiles } from '@/lib/googleDrive';
 
 /**
  * Repository Component for MUN Connect
@@ -121,6 +123,29 @@ export default function RepositoryComponent() {
     loadData();
   }, []);
 
+  // Initialize Google API
+  useEffect(() => {
+    // Check if Google Drive was previously connected
+    const wasConnected = localStorage.getItem('gdriveConnected') === 'true';
+    if (wasConnected) {
+      setIsGDriveConnected(true);
+      
+      // Load Google API and fetch documents
+      const initGoogleApi = async () => {
+        try {
+          await loadGoogleApi();
+          if (isGoogleAuthenticated()) {
+            fetchGoogleDriveDocuments();
+          }
+        } catch (error) {
+          console.error('Error initializing Google API:', error);
+        }
+      };
+      
+      initGoogleApi();
+    }
+  }, []);
+
   // Handle filter changes
   const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -184,72 +209,81 @@ export default function RepositoryComponent() {
   };
 
   // Google Drive Integration Functions
-  const connectToGoogleDrive = () => {
-    // In a real implementation, this would initiate OAuth flow with Google
-    console.log('Connecting to Google Drive...');
-    
-    // Simulate successful connection
-    setTimeout(() => {
+  const connectToGoogleDrive = async () => {
+    try {
+      // Load Google API if not already loaded
+      await loadGoogleApi();
+      
+      // Sign in with Google
+      await signInWithGoogle();
+      
       setIsGDriveConnected(true);
       localStorage.setItem('gdriveConnected', 'true');
       fetchGoogleDriveDocuments();
-    }, 1500);
+    } catch (error) {
+      console.error('Error connecting to Google Drive:', error);
+      alert('Failed to connect to Google Drive. Please try again.');
+    }
   };
 
-  const disconnectGoogleDrive = () => {
-    // In a real implementation, this would revoke access tokens
-    console.log('Disconnecting from Google Drive...');
-    
-    setIsGDriveConnected(false);
-    setGDriveDocuments([]);
-    localStorage.removeItem('gdriveConnected');
+  const disconnectGoogleDrive = async () => {
+    try {
+      // Sign out from Google
+      if (isGoogleAuthenticated()) {
+        await signOutFromGoogle();
+      }
+      
+      setIsGDriveConnected(false);
+      setGDriveDocuments([]);
+      localStorage.removeItem('gdriveConnected');
+    } catch (error) {
+      console.error('Error disconnecting from Google Drive:', error);
+    }
   };
 
-  const fetchGoogleDriveDocuments = () => {
-    // Simulate fetching documents from Google Drive
-    console.log('Fetching Google Drive documents...');
-    
-    // Mock Google Drive documents
-    const mockGDriveDocs = [
-      { id: 'gd1', name: 'UNSC Position Paper.docx', modifiedTime: '2025-03-01T10:30:00Z' },
-      { id: 'gd2', name: 'Draft Resolution - Climate Action.docx', modifiedTime: '2025-02-28T14:15:00Z' },
-      { id: 'gd3', name: 'ECOSOC Research Notes.docx', modifiedTime: '2025-02-25T09:45:00Z' },
-    ];
-    
-    setTimeout(() => {
-      setGDriveDocuments(mockGDriveDocs);
-    }, 1000);
+  const fetchGoogleDriveDocuments = async () => {
+    try {
+      // Get document files from Google Drive
+      const files = await listDriveFiles("mimeType contains 'document' or mimeType contains 'pdf'");
+      setGDriveDocuments(files as any[]);
+    } catch (error) {
+      console.error('Error fetching Google Drive documents:', error);
+    }
   };
 
-  const importFromGoogleDrive = (driveFileId: string, fileName: string) => {
+  const importFromGoogleDrive = async (driveFileId: string, fileName: string) => {
     // In a real implementation, this would download the file from Google Drive
     // and then upload it to your own backend
     console.log(`Importing file ${fileName} (${driveFileId}) from Google Drive...`);
     setIsImportingFromDrive(true);
     
-    // Simulate import process
-    setTimeout(() => {
-      // Create a new document entry
-      const newDoc: Document = {
-        id: `imported-${driveFileId}`,
-        title: fileName.replace('.docx', ''),
-        type: fileName.toLowerCase().includes('resolution') ? 'resolution' : 'position_paper',
-        committee: fileName.includes('UNSC') ? 'UNSC' : 
-                  fileName.includes('ECOSOC') ? 'ECOSOC' : 'UNEP',
-        country: 'United States', // Default, would be determined by file content in real app
-        topic: fileName.includes('Climate') ? 'Climate Action' : 'General',
-        created_at: new Date().toISOString(),
-        user: { id: '101', email: 'alex@example.com', username: 'alexj', name: 'Alex Johnson' },
-        format_status: 'not_checked',
-      };
+    try {
+      // Create a FormData object for the document
+      const formData = new FormData();
+      formData.append('title', fileName.replace(/\.(docx|pdf|txt)$/i, ''));
+      formData.append('type', fileName.toLowerCase().includes('resolution') ? 'resolution' : 'position_paper');
+      formData.append('committee', fileName.includes('UNSC') ? 'UNSC' : 
+                fileName.includes('ECOSOC') ? 'ECOSOC' : 'UNEP');
+      formData.append('country', 'United States'); // Default, would be determined by file content in real app
+      formData.append('topic', fileName.includes('Climate') ? 'Climate Action' : 'General');
+      formData.append('driveFileId', driveFileId);
       
-      // Add to documents list
-      setDocuments(prev => [newDoc, ...prev]);
-      setIsImportingFromDrive(false);
+      // Create the document in your database
+      const result = await documentsAPI.createDocument(formData);
+      
+      // Add the new document to the list
+      if (result && result[0]) {
+        setDocuments(prev => [result[0], ...prev]);
+      }
       
       // Show success message
       alert(`Successfully imported "${fileName}" from Google Drive`);
-    }, 2000);
+    } catch (error) {
+      console.error('Error importing from Google Drive:', error);
+      alert('Failed to import document from Google Drive.');
+    } finally {
+      setIsImportingFromDrive(false);
+    }
   };
 
   return (

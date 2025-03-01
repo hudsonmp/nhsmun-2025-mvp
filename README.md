@@ -1,220 +1,153 @@
 # MUN Connect Platform
 
-A comprehensive platform for Model United Nations delegates that provides tools for research, speechwriting, and document management.
+## Overview
+
+MUN Connect is a platform designed for Model United Nations participants, providing document management, authentication, and integration with Google Drive for seamless document sharing and collaboration.
+
+## System Requirements
+
+- Python 3.10+ for the backend
+- Node.js 16+ for the frontend
+- npm or yarn package manager
+
+## Getting Started
+
+### First-time Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/nhsmun-2025-mvp.git
+   cd nhsmun-2025-mvp
+   ```
+
+2. **Set up the backend**
+   ```bash
+   # Create virtual environment
+   python3 -m virtualenv backend_venv
+   
+   # Activate virtual environment
+   source backend_venv/bin/activate  # On Windows: backend_venv\Scripts\activate
+   
+   # Install dependencies
+   pip install supabase fastapi uvicorn python-dotenv pydantic python-jose passlib python-multipart
+   ```
+
+3. **Set up the frontend**
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+4. **Configure environment variables**
+   
+   Create `.env.local` files in both the backend and frontend directories using the provided examples:
+   
+   - `backend/.env.local`:
+     ```
+     # Supabase Configuration
+     SUPABASE_URL=your_supabase_url
+     SUPABASE_KEY=your_supabase_key
+     
+     # JWT Configuration
+     SECRET_KEY=your_secret_key
+     ALGORITHM=HS256
+     ACCESS_TOKEN_EXPIRE_MINUTES=60
+     
+     # FastAPI Configuration
+     BACKEND_CORS_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]
+     ```
+   
+   - `frontend/.env.local`:
+     ```
+     # Supabase Configuration
+     NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+     NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+     
+     # Google Drive API Configuration
+     NEXT_PUBLIC_GOOGLE_CLIENT_ID=your_google_client_id
+     NEXT_PUBLIC_GOOGLE_API_KEY=your_google_api_key
+     
+     # API URL
+     NEXT_PUBLIC_API_URL=http://localhost:8000
+     ```
+
+### Starting the Application
+
+#### Method 1: Starting Servers Individually
+
+1. **Start the backend server**
+   ```bash
+   source backend_venv/bin/activate  # On Windows: backend_venv\Scripts\activate
+   cd backend
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+2. **Start the frontend server**
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+
+#### Method 2: Using Helper Scripts
+
+We've provided convenience scripts to manage the application:
+
+1. **To restart all services** (kill any existing processes and prepare for a fresh start)
+   ```bash
+   npm run restart
+   ```
+
+2. **To start both backend and frontend**
+   ```bash
+   npm run start
+   ```
+
+### Access the Application
+
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend API: [http://localhost:8000](http://localhost:8000)
+- API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ## Features
 
-- Document Repository: Upload, categorize, and search position papers and resolutions
-- AI Research Assistant: Get intelligent insights on any topic
-- Speechwriting AI: Create compelling speeches with AI-powered tools
-- Document Format Checker: Ensure your documents comply with MUN standards
+- **Authentication**: User registration, login, and session management
+- **Document Management**: Create, read, update, and delete documents
+- **Google Drive Integration**: Connect with Google Drive for document storage
+- **Responsive UI**: Modern interface that works on desktop and mobile devices
 
-## Tech Stack
+## Troubleshooting
 
-### Backend
-- FastAPI
-- Supabase (Authentication, Database, Storage)
-- Python 3.9+
+### Port Conflicts
 
-### Frontend
-- Next.js 14
-- React 18
-- TailwindCSS
-- TypeScript
+If you encounter port conflicts, use the restart script to clear existing processes:
 
-## Setup Instructions
-
-### 1. Prerequisites
-- Node.js (v16 or later)
-- Python 3.9+
-- Supabase account
-- npm or yarn
-
-### 2. Supabase Setup
-
-1. **Create a Supabase Project**:
-   - Sign up at [Supabase](https://supabase.io/)
-   - Create a new project
-   - Save your project URL and API keys
-
-2. **Setup Database Tables**:
-   - From the Supabase dashboard, navigate to SQL Editor
-   - Create the required tables by executing the following SQL:
-
-```sql
--- Users table
-CREATE TABLE users (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  email VARCHAR NOT NULL UNIQUE,
-  username VARCHAR NOT NULL,
-  password VARCHAR NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Documents table
-CREATE TABLE documents (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  title VARCHAR NOT NULL,
-  type VARCHAR NOT NULL,
-  committee VARCHAR NOT NULL,
-  country VARCHAR NOT NULL,
-  topic VARCHAR NOT NULL,
-  content TEXT,
-  user_id UUID NOT NULL REFERENCES users(id),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE,
-  format_status VARCHAR DEFAULT 'not_checked'
-);
-
--- Create indexes for faster queries
-CREATE INDEX documents_user_id_idx ON documents(user_id);
-CREATE INDEX documents_type_idx ON documents(type);
-CREATE INDEX documents_committee_idx ON documents(committee);
-CREATE INDEX documents_country_idx ON documents(country);
-```
-
-3. **Enable Row Level Security (RLS)**:
-   - Go to Authentication → Policies
-   - Enable RLS on both tables
-   - Add policies to ensure users can only access their own data
-
-### 3. Backend Setup
-
-1. **Clone the Repository**:
 ```bash
-git clone <repository-url>
-cd <repository-folder>
+npm run restart
 ```
 
-2. **Environment Setup**:
+### Backend Dependency Issues
+
+If you encounter issues with backend dependencies:
+
 ```bash
-cd backend
-cp .env.example .env
+source backend_venv/bin/activate
+pip install --upgrade -r backend/requirements.txt
 ```
 
-3. **Update the .env File**:
-   - Add your Supabase URL and API key
-   - Generate a secret key for JWT (you can use `openssl rand -hex 32`)
+### Frontend Dependency Issues
 
-```
-# Supabase Configuration
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
+If you encounter issues with frontend dependencies:
 
-# JWT Configuration
-SECRET_KEY=your_secret_key_for_jwt
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# FastAPI Configuration
-BACKEND_CORS_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]
-```
-
-4. **Install Dependencies and Run**:
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-The backend should now be running on http://localhost:8000
-
-### 4. Frontend Setup
-
-1. **Navigate to Frontend Directory**:
 ```bash
 cd frontend
-```
-
-2. **Install Dependencies**:
-```bash
 npm install
 ```
 
-3. **Create .env.local File**:
-```bash
-touch .env.local
-```
+## For Detailed Setup Instructions
 
-4. **Add Environment Variables**:
-```
-BACKEND_URL=http://localhost:8000
-```
-
-5. **Run Development Server**:
-```bash
-npm run dev
-```
-
-The frontend should now be running on http://localhost:3000
-
-## API Documentation
-
-Once the backend is running, you can access the API documentation at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## Project Structure
-
-```
-.
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── routes/
-│   │   │   │   ├── auth.py
-│   │   │   │   └── documents.py
-│   │   │   └── auth.py
-│   │   ├── database/
-│   │   │   └── supabase_client.py
-│   │   ├── schemas/
-│   │   │   ├── document.py
-│   │   │   └── user.py
-│   │   └── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-└── frontend/
-    ├── app/
-    │   ├── globals.css
-    │   ├── layout.tsx
-    │   └── page.tsx
-    ├── lib/
-    │   └── api.ts
-    ├── types/
-    │   ├── axios.d.ts
-    │   └── js-cookie.d.ts
-    ├── package.json
-    ├── tailwind.config.js
-    └── tsconfig.json
-```
-
-## Development
-
-When running in development mode, the backend server runs on port 8000 and the frontend runs on port 3000.
-
-## Deployment
-
-### Backend Deployment (Docker)
-
-```bash
-cd backend
-docker build -t mun-platform-backend .
-docker run -p 8000:8000 mun-platform-backend
-```
-
-### Frontend Deployment (Vercel)
-
-```bash
-cd frontend
-npm run build
-```
-
-Deploy to Vercel by connecting your GitHub repository or using the Vercel CLI:
-
-```bash
-npm install -g vercel
-vercel
-```
+For more detailed instructions on configuring Supabase and Google Drive integration, please refer to:
+- [frontend/SETUP_INSTRUCTIONS.md](frontend/SETUP_INSTRUCTIONS.md)
 
 ## License
 
-[MIT](LICENSE) 
+[MIT License](LICENSE) 

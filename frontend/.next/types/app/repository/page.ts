@@ -1,8 +1,8 @@
 // File: /Users/hudsonmitchell-pullman/nhsmun-2025-mvp/frontend/app/repository/page.tsx
-import * as entry from '../../../../app/repository/component.jsx'
+import * as entry from '../../../../app/repository/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
-type TEntry = typeof import('../../../../app/repository/component.jsx')
+type TEntry = typeof import('../../../../app/repository/page.js')
 
 // Check that the entry is a valid entry
 checkFields<Diff<{

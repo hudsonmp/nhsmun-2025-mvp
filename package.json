@@ -1,0 +1,28 @@
+{
+  "name": "nhsmun-2025-mvp",
+  "version": "1.0.0",
+  "description": "A comprehensive platform for Model United Nations delegates that provides tools for research, speechwriting, and document management.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "restart": "./restart.sh",
+    "start": "./start.sh",
+    "dev": "npm run restart && npm run start",
+    "start:frontend": "cd frontend && npm run dev -- -p 3000",
+    "start:backend": "cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hudsonmp/nhsmun-2025-mvp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hudsonmp/nhsmun-2025-mvp/issues"
+  },
+  "homepage": "https://github.com/hudsonmp/nhsmun-2025-mvp#readme",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

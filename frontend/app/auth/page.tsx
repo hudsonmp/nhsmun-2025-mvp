@@ -61,10 +61,20 @@ function SignInForm() {
     setIsLoading(true);
 
     try {
-      await authAPI.login({ email, password });
+      const result = await authAPI.login({ email, password });
+      console.log('Login successful:', result);
       router.push('/repository'); // Redirect to repository after successful login
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to sign in');
+      console.error('Login error:', err);
+      
+      // Handle Supabase-specific errors
+      if (err.message) {
+        setError(err.message);
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else {
+        setError('Failed to sign in. Please check your credentials and try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -169,13 +179,32 @@ function SignUpForm() {
     setIsLoading(true);
 
     try {
-      await authAPI.register({ email, username, password });
+      const result = await authAPI.register({ email, username, password });
+      console.log('Registration successful:', result);
+      
       // Automatically log in after registration
-      await authAPI.login({ email, password });
-      router.push('/repository');
+      try {
+        const loginResult = await authAPI.login({ email, password });
+        console.log('Login after registration successful:', loginResult);
+        router.push('/repository');
+      } catch (loginErr: any) {
+        console.error('Login after registration failed:', loginErr);
+        // If login fails, still allow them to manually log in
+        setError('Account created, but automatic login failed. Please sign in manually.');
+        setIsLoading(false);
+      }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create account');
-    } finally {
+      console.error('Registration error:', err);
+      
+      // Handle Supabase-specific errors
+      if (err.message) {
+        setError(err.message);
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else {
+        setError('Failed to create account. Please try again.');
+      }
+      
       setIsLoading(false);
     }
   };
