@@ -1,7 +1,12 @@
 'use client';
 
 import RepositoryComponent from './component';
+import { AuthGuard } from '@/lib/context/AuthGuard';
 
 export default function RepositoryPage() {
-  return <RepositoryComponent />;
+  return (
+    <AuthGuard>
+      <RepositoryComponent />
+    </AuthGuard>
+  );
 } 

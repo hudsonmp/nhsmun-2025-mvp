@@ -5,7 +5,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Document, DocumentFilters } from '@/types/document';
 import { documentsAPI } from '@/lib/api';
-import { loadGoogleApi, isGoogleAuthenticated, signInWithGoogle, signOutFromGoogle, listDriveFiles } from '@/lib/googleDrive';
+import { 
+  loadGoogleApi, 
+  isGoogleAuthenticated, 
+  signInWithGoogle, 
+  signOutFromGoogle, 
+  listDriveFiles,
+  checkGoogleDriveConfig
+} from '@/lib/googleDrive';
 
 /**
  * Repository Component for MUN Connect
@@ -33,6 +40,7 @@ export default function RepositoryComponent() {
   const [isGDriveConnected, setIsGDriveConnected] = useState(false);
   const [gDriveDocuments, setGDriveDocuments] = useState<any[]>([]);
   const [isImportingFromDrive, setIsImportingFromDrive] = useState(false);
+  const [gDriveStatusMessage, setGDriveStatusMessage] = useState<string | null>(null);
 
   // Mock data for development and demos
   const committees = ['UNSC', 'UNHRC', 'UNEP', 'DISEC', 'WHO', 'ECOSOC'];
@@ -135,10 +143,14 @@ export default function RepositoryComponent() {
         try {
           await loadGoogleApi();
           if (isGoogleAuthenticated()) {
-            fetchGoogleDriveDocuments();
+            await fetchGoogleDriveDocuments();
           }
         } catch (error) {
           console.error('Error initializing Google API:', error);
+          // If there was an error with the API, reset the connection state
+          setIsGDriveConnected(false);
+          localStorage.removeItem('gdriveConnected');
+          alert('There was an error connecting to Google Drive. Please try reconnecting.');
         }
       };
       
@@ -208,21 +220,44 @@ export default function RepositoryComponent() {
     });
   };
 
-  // Google Drive Integration Functions
+  // Connect to Google Drive
   const connectToGoogleDrive = async () => {
+    setGDriveStatusMessage('Connecting to Google Drive...');
+    
     try {
-      // Load Google API if not already loaded
+      // First check if the Google Drive API is properly configured
+      const config = await checkGoogleDriveConfig();
+      if (!config.isConfigured) {
+        setGDriveStatusMessage('Google Drive API is not properly configured. Please check your API keys.');
+        console.error('Google Drive configuration issues:', config.errors);
+        return;
+      }
+      
+      console.log('Initializing Google API...');
       await loadGoogleApi();
       
+      if (!window.gapi || !window.gapi.auth2) {
+        setGDriveStatusMessage('Failed to load Google API. Please try again later.');
+        return;
+      }
+      
+      setGDriveStatusMessage('Authenticating with Google...');
       // Sign in with Google
       await signInWithGoogle();
       
-      setIsGDriveConnected(true);
-      localStorage.setItem('gdriveConnected', 'true');
-      fetchGoogleDriveDocuments();
-    } catch (error) {
+      // Check if authentication was successful
+      if (isGoogleAuthenticated()) {
+        setIsGDriveConnected(true);
+        setGDriveStatusMessage('Connected to Google Drive');
+        
+        // Fetch Google Drive documents
+        await fetchGoogleDriveDocuments();
+      } else {
+        setGDriveStatusMessage('Google authentication failed. Please try again.');
+      }
+    } catch (error: any) {
       console.error('Error connecting to Google Drive:', error);
-      alert('Failed to connect to Google Drive. Please try again.');
+      setGDriveStatusMessage(`Failed to connect to Google Drive: ${error.message || 'Unknown error'}. Please try again.`);
     }
   };
 
@@ -241,13 +276,34 @@ export default function RepositoryComponent() {
     }
   };
 
+  // Fetch documents from Google Drive
   const fetchGoogleDriveDocuments = async () => {
+    if (!isGoogleAuthenticated()) {
+      setGDriveStatusMessage('Not authenticated with Google. Please connect first.');
+      return;
+    }
+    
     try {
-      // Get document files from Google Drive
-      const files = await listDriveFiles("mimeType contains 'document' or mimeType contains 'pdf'");
-      setGDriveDocuments(files as any[]);
-    } catch (error) {
+      setIsImportingFromDrive(true);
+      setGDriveStatusMessage('Fetching documents from Google Drive...');
+      
+      // Query Google Drive for documents (MIME types for common document formats)
+      const driveFiles = await listDriveFiles(
+        "mimeType='application/vnd.google-apps.document' or " +
+        "mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or " +
+        "mimeType='application/pdf' or " +
+        "mimeType='application/msword'"
+      );
+      
+      // Make sure we have an array of files
+      const filesArray = Array.isArray(driveFiles) ? driveFiles : [];
+      setGDriveDocuments(filesArray);
+      setGDriveStatusMessage(`Found ${filesArray.length} documents in Google Drive`);
+    } catch (error: any) {
       console.error('Error fetching Google Drive documents:', error);
+      setGDriveStatusMessage(`Failed to fetch Google Drive documents: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsImportingFromDrive(false);
     }
   };
 
@@ -419,38 +475,41 @@ export default function RepositoryComponent() {
                   </button>
 
                   {/* Google Drive Section */}
-                  {isGDriveConnected && (
-                    <div className="mt-6 border-t border-gray-200 pt-4">
-                      <h3 className="text-md font-medium text-gray-900 mb-3">Google Drive</h3>
-                      {isImportingFromDrive ? (
-                        <div className="flex items-center justify-center py-4">
-                          <svg className="animate-spin h-5 w-5 text-blue-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          <span>Importing...</span>
-                        </div>
-                      ) : (
-                        <div className="space-y-2 max-h-60 overflow-y-auto">
-                          {gDriveDocuments.length > 0 ? (
-                            gDriveDocuments.map(doc => (
-                              <div key={doc.id} className="flex justify-between items-center p-2 hover:bg-gray-50 rounded">
-                                <span className="text-sm truncate">{doc.name}</span>
-                                <button
-                                  onClick={() => importFromGoogleDrive(doc.id, doc.name)}
-                                  className="text-xs text-blue-600 hover:text-blue-800"
-                                >
-                                  Import
-                                </button>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-sm text-gray-500">No documents found in Google Drive</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-6 border-t border-gray-200 pt-4">
+                    <h3 className="text-md font-medium text-gray-900 mb-3">Google Drive</h3>
+                    
+                    {/* Google Drive Status Message */}
+                    {gDriveStatusMessage && (
+                      <div className={`mb-3 px-3 py-2 rounded text-sm ${
+                        gDriveStatusMessage.startsWith('Error') 
+                          ? 'bg-red-50 text-red-700' 
+                          : gDriveStatusMessage.startsWith('Successfully') 
+                            ? 'bg-green-50 text-green-700'
+                            : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {gDriveStatusMessage}
+                      </div>
+                    )}
+                    
+                    {!isGDriveConnected ? (
+                      <button
+                        onClick={connectToGoogleDrive}
+                        className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        <svg className="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-2.917 16.083c-2.258 0-4.083-1.825-4.083-4.083s1.825-4.083 4.083-4.083c1.103 0 2.024.402 2.735 1.067l-1.107 1.068c-.304-.292-.834-.63-1.628-.63-1.394 0-2.531 1.155-2.531 2.579 0 1.424 1.138 2.579 2.531 2.579 1.616 0 2.224-1.162 2.316-1.762h-2.316v-1.4h3.855c.036.204.064.401.064.677 0 2.332-1.563 3.988-3.919 3.988zm9.917-3.5h-1.75v1.75h-1.167v-1.75h-1.75v-1.166h1.75v-1.75h1.167v1.75h1.75v1.166z" />
+                        </svg>
+                        Connect to Google Drive
+                      </button>
+                    ) : (
+                      <button
+                        onClick={disconnectGoogleDrive}
+                        className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Disconnect from Google Drive
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 

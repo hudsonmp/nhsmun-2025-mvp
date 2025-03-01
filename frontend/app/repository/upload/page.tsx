@@ -45,26 +45,43 @@ export default function UploadPage() {
         // Use manual credentials if available
         const useManualCredentials = !!(manualApiKey && manualClientId);
         
-        await loadGoogleApi(useManualCredentials);
-        console.log('Google API initialized successfully');
+        // First, check if the configuration is valid
+        const config = await checkGoogleDriveConfig();
+        if (!config.isConfigured && !useManualCredentials) {
+          console.warn('Google Drive API not configured properly:', config.errors);
+          // Don't try to initialize if config is missing and no manual credentials
+          return;
+        }
         
-        // Log additional information about authentication state
-        if (window.gapi && window.gapi.auth2) {
-          const authInstance = window.gapi.auth2.getAuthInstance();
-          console.log('Authentication state after initialization:', {
-            authInstanceExists: !!authInstance,
-            isSignedIn: authInstance ? authInstance.isSignedIn.get() : false
-          });
+        try {
+          await loadGoogleApi(useManualCredentials);
+          console.log('Google API initialized successfully');
           
-          // Add listener to track sign-in state changes
-          if (authInstance) {
-            authInstance.isSignedIn.listen((signedIn: boolean) => {
-              console.log(`Google sign-in state changed: ${signedIn ? 'signed in' : 'signed out'}`);
+          // Log additional information about authentication state
+          if (window.gapi && window.gapi.auth2) {
+            const authInstance = window.gapi.auth2.getAuthInstance();
+            console.log('Authentication state after initialization:', {
+              authInstanceExists: !!authInstance,
+              isSignedIn: authInstance ? authInstance.isSignedIn.get() : false
             });
+            
+            // Add listener to track sign-in state changes
+            if (authInstance) {
+              authInstance.isSignedIn.listen((signedIn: boolean) => {
+                console.log(`Google sign-in state changed: ${signedIn ? 'signed in' : 'signed out'}`);
+              });
+            }
           }
+        } catch (initError: any) {
+          console.error('Failed to initialize Google API:', {
+            message: initError.message,
+            name: initError.name,
+            stack: initError.stack
+          });
+          setError(`Google Drive integration error: ${initError.message || 'Unknown error'}`);
         }
       } catch (error: any) {
-        console.error('Error initializing Google API:', {
+        console.error('Error in Google API initialization process:', {
           message: error.message, 
           name: error.name,
           stack: error.stack,
@@ -255,7 +272,7 @@ export default function UploadPage() {
       console.log('Google Drive Diagnostics:', diagnostics);
       setDiagnosticResults(diagnostics);
       
-      if (diagnostics.errors.length > 0) {
+      if (diagnostics.errors && diagnostics.errors.length > 0) {
         setError(`Google Drive issues found: ${diagnostics.errors.join(', ')}`);
       } else {
         setError('Google Drive configuration looks good. Try signing out and in again.');
@@ -889,44 +906,17 @@ export default function UploadPage() {
                   <div className="mt-2">
                     <h4 className="font-medium">Configuration Status:</h4>
                     <ul className="list-disc pl-5 text-sm text-gray-600">
-                      <li>API Key: {diagnosticResults.configStatus.apiKey}</li>
-                      <li>Client ID: {diagnosticResults.configStatus.clientId}</li>
+                      <li>API Key: {diagnosticResults.apiKey !== undefined ? (diagnosticResults.apiKey ? '✅ Available' : '❌ Missing') : 'Unknown'}</li>
+                      <li>Client ID: {diagnosticResults.clientId !== undefined ? (diagnosticResults.clientId ? '✅ Available' : '❌ Missing') : 'Unknown'}</li>
                     </ul>
                     
-                    <h4 className="font-medium mt-2">API Status:</h4>
-                    <ul className="list-disc pl-5 text-sm text-gray-600">
-                      <li>GAPI Loaded: {diagnosticResults.apiStatus.gapiLoaded ? '✅' : '❌'}</li>
-                      <li>Client Loaded: {diagnosticResults.apiStatus.clientLoaded ? '✅' : '❌'}</li>
-                      <li>Auth Loaded: {diagnosticResults.apiStatus.authLoaded ? '✅' : '❌'}</li>
-                      <li>Drive Loaded: {diagnosticResults.apiStatus.driveLoaded ? '✅' : '❌'}</li>
-                      <li>Signed In: {diagnosticResults.apiStatus.isSignedIn ? '✅' : '❌'}</li>
-                      {diagnosticResults.apiStatus.user && (
-                        <li>User: {diagnosticResults.apiStatus.user.name} ({diagnosticResults.apiStatus.user.email})</li>
-                      )}
-                      {diagnosticResults.apiStatus.hasValidToken !== undefined && (
-                        <li>Valid Token: {diagnosticResults.apiStatus.hasValidToken ? '✅' : '❌'}</li>
-                      )}
-                      {diagnosticResults.apiStatus.tokenExpiry && (
-                        <li>Token Expiry: {diagnosticResults.apiStatus.tokenExpiry}</li>
-                      )}
-                      {diagnosticResults.apiStatus.hasFileScope !== undefined && (
-                        <li>Has Drive File Scope: {diagnosticResults.apiStatus.hasFileScope ? '✅' : '❌'}</li>
-                      )}
-                      {diagnosticResults.apiStatus.hasReadScope !== undefined && (
-                        <li>Has Drive Read Scope: {diagnosticResults.apiStatus.hasReadScope ? '✅' : '❌'}</li>
-                      )}
-                    </ul>
-                    
-                    {diagnosticResults.apiTests && (
+                    {diagnosticResults.apiStatus && (
                       <>
-                        <h4 className="font-medium mt-2">API Tests:</h4>
+                        <h4 className="font-medium mt-2">API Status:</h4>
                         <ul className="list-disc pl-5 text-sm text-gray-600">
-                          {diagnosticResults.apiTests.listFilesSuccess !== undefined && (
-                            <li>List Files Test: {diagnosticResults.apiTests.listFilesSuccess ? '✅ Success' : '❌ Failed'}</li>
-                          )}
-                          {diagnosticResults.apiTests.listFilesError && (
-                            <li>Error: {diagnosticResults.apiTests.listFilesError.message}</li>
-                          )}
+                          <li>GAPI Loaded: {diagnosticResults.apiStatus.gapiLoaded ? '✅' : '❌'}</li>
+                          <li>Client Loaded: {diagnosticResults.apiStatus.clientLoaded ? '✅' : '❌'}</li>
+                          <li>Auth Loaded: {diagnosticResults.apiStatus.authLoaded ? '✅' : '❌'}</li>
                         </ul>
                       </>
                     )}
