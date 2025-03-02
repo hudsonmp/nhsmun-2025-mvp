@@ -4,27 +4,41 @@ import React, { createContext, useState, useContext, useEffect, ReactNode } from
 import { useRouter } from 'next/navigation';
 import { authAPI } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
+import { Session, User } from '@supabase/supabase-js';
+import { googleDriveService } from '@/lib/googleDrive';
 
 // Define the type for the context value
 interface AuthContextType {
   isAuthenticated: boolean;
-  user: any | null;
+  user: User | null;
+  session: Session | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<any>;
   register: (email: string, username: string, password: string) => Promise<any>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<boolean>;
+  // Google Drive authentication
+  isGoogleDriveAuthenticated: boolean;
+  isGoogleDriveLoading: boolean;
+  authenticateGoogleDrive: () => Promise<boolean>;
+  initializeGoogleDrive: () => Promise<void>;
 }
 
 // Create the context with a default value
 const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
   user: null,
+  session: null,
   loading: true,
   login: async () => null,
   register: async () => null,
   logout: async () => {},
   checkAuth: async () => false,
+  // Google Drive authentication defaults
+  isGoogleDriveAuthenticated: false,
+  isGoogleDriveLoading: false,
+  authenticateGoogleDrive: async () => false,
+  initializeGoogleDrive: async () => {},
 });
 
 // Custom hook to use the auth context
@@ -32,8 +46,14 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // Google Drive state
+  const [isGoogleDriveAuthenticated, setIsGoogleDriveAuthenticated] = useState(false);
+  const [isGoogleDriveLoading, setIsGoogleDriveLoading] = useState(false);
+  const [isGoogleDriveInitialized, setIsGoogleDriveInitialized] = useState(false);
+  
   const router = useRouter();
 
   // Initialize authentication state
@@ -41,36 +61,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const initAuth = async () => {
       setLoading(true);
       try {
-        // Check if user is authenticated with Supabase
-        const isAuth = await authAPI.isAuthenticated();
+        // Get the current session from Supabase
+        const { data: { session } } = await supabase.auth.getSession();
         
-        // If Supabase auth confirms the user is authenticated
-        if (isAuth) {
+        if (session) {
+          setSession(session);
+          setUser(session.user);
           setIsAuthenticated(true);
-          const currentUser = await authAPI.getCurrentUser();
-          setUser(currentUser);
           console.log('Auth initialized from Supabase session');
-        } 
-        // Fallback to localStorage if Supabase session check fails
-        else {
-          // Try to get auth state from localStorage (added as a fallback)
-          const localAuth = localStorage.getItem('isAuthenticated') === 'true';
-          const localUser = localStorage.getItem('user');
           
-          if (localAuth && localUser) {
-            setIsAuthenticated(true);
-            setUser(JSON.parse(localUser));
-            console.log('Auth initialized from localStorage fallback');
-          } else {
-            setIsAuthenticated(false);
-            setUser(null);
-            console.log('No authentication found');
+          // Initialize Google Drive when user is authenticated
+          if (!isGoogleDriveInitialized) {
+            initializeGoogleDrive();
           }
+        } else {
+          setIsAuthenticated(false);
+          setUser(null);
+          setSession(null);
+          console.log('No active Supabase session found');
         }
       } catch (error) {
         console.error('Error initializing auth:', error);
         setIsAuthenticated(false);
         setUser(null);
+        setSession(null);
       } finally {
         setLoading(false);
       }
@@ -82,19 +96,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state changed:', event, session ? 'Session exists' : 'No session');
       
-      if (event === 'SIGNED_IN' && session) {
-        setIsAuthenticated(true);
+      if (session) {
+        setSession(session);
         setUser(session.user);
-        localStorage.setItem('isAuthenticated', 'true');
-        localStorage.setItem('user', JSON.stringify({
-          id: session.user.id,
-          email: session.user.email,
-        }));
-      } else if (event === 'SIGNED_OUT') {
-        setIsAuthenticated(false);
+        setIsAuthenticated(true);
+        
+        if (event === 'SIGNED_IN') {
+          console.log('User signed in, updating state with session data');
+          // Initialize Google Drive when user signs in
+          if (!isGoogleDriveInitialized) {
+            initializeGoogleDrive();
+          }
+        } else if (event === 'TOKEN_REFRESHED') {
+          console.log('Session token refreshed automatically');
+        }
+      } else {
+        setSession(null);
         setUser(null);
-        localStorage.removeItem('isAuthenticated');
-        localStorage.removeItem('user');
+        setIsAuthenticated(false);
+        setIsGoogleDriveAuthenticated(false);
+        
+        if (event === 'SIGNED_OUT') {
+          console.log('User signed out, clearing session data');
+        }
       }
     });
 
@@ -104,25 +128,63 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
+  // Initialize Google Drive API
+  const initializeGoogleDrive = async () => {
+    if (isGoogleDriveInitialized) return;
+    
+    setIsGoogleDriveLoading(true);
+    try {
+      await googleDriveService.initialize();
+      setIsGoogleDriveInitialized(true);
+      
+      // Check if already authenticated
+      const isAuthenticated = googleDriveService.isAuthenticated();
+      setIsGoogleDriveAuthenticated(isAuthenticated);
+      
+      console.log('Google Drive API initialized, authenticated:', isAuthenticated);
+    } catch (error) {
+      console.error('Failed to initialize Google Drive:', error);
+    } finally {
+      setIsGoogleDriveLoading(false);
+    }
+  };
+
+  // Authenticate with Google Drive
+  const authenticateGoogleDrive = async () => {
+    setIsGoogleDriveLoading(true);
+    try {
+      // Make sure Google Drive is initialized
+      if (!isGoogleDriveInitialized) {
+        await initializeGoogleDrive();
+      }
+      
+      // Authenticate with Google Drive
+      const authenticated = await googleDriveService.authenticate();
+      setIsGoogleDriveAuthenticated(authenticated);
+      
+      console.log('Google Drive authentication result:', authenticated);
+      return authenticated;
+    } catch (error) {
+      console.error('Google Drive authentication error:', error);
+      return false;
+    } finally {
+      setIsGoogleDriveLoading(false);
+    }
+  };
+
   const login = async (email: string, password: string) => {
     try {
       const result = await authAPI.login({ email, password });
       console.log('Login result in AuthContext:', result && result.session ? 'Session present' : 'No session');
       
       if (result && result.session) {
-        setIsAuthenticated(true);
+        setSession(result.session);
         setUser(result.user);
+        setIsAuthenticated(true);
         
-        // Store authentication state in localStorage (in addition to cookies)
-        // This provides a fallback if cookie handling has issues
-        localStorage.setItem('isAuthenticated', 'true');
-        
-        // Store minimal user info locally to maintain state between page loads
-        if (result.user) {
-          localStorage.setItem('user', JSON.stringify({
-            id: result.user.id,
-            email: result.user.email,
-          }));
+        // Initialize Google Drive after login
+        if (!isGoogleDriveInitialized) {
+          initializeGoogleDrive();
         }
       } else {
         console.warn('Login successful but no session returned:', result);
@@ -153,15 +215,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Clear authentication state
       setIsAuthenticated(false);
       setUser(null);
-      
-      // Clear localStorage auth data
-      localStorage.removeItem('isAuthenticated');
-      localStorage.removeItem('user');
-      
-      // Clear any session cookies
-      document.cookie.split(';').forEach(c => {
-        document.cookie = c.replace(/^ +/, '').replace(/=.*/, `=;expires=${new Date().toUTCString()};path=/`);
-      });
+      setSession(null);
+      setIsGoogleDriveAuthenticated(false);
       
       console.log('Logout complete, redirecting to auth page');
       router.push('/auth');
@@ -172,15 +227,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const checkAuth = async () => {
     try {
-      const isAuth = await authAPI.isAuthenticated();
-      setIsAuthenticated(isAuth);
+      // Get the current session from Supabase
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (isAuth && !user) {
-        const currentUser = await authAPI.getCurrentUser();
-        setUser(currentUser);
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setIsAuthenticated(true);
+        return true;
+      } else {
+        setIsAuthenticated(false);
+        setUser(null);
+        setSession(null);
+        return false;
       }
-      
-      return isAuth;
     } catch (error) {
       console.error('Check auth error:', error);
       return false;
@@ -192,11 +252,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       value={{ 
         isAuthenticated, 
         user, 
+        session,
         loading,
         login, 
         register,
         logout,
-        checkAuth
+        checkAuth,
+        // Google Drive authentication
+        isGoogleDriveAuthenticated,
+        isGoogleDriveLoading,
+        authenticateGoogleDrive,
+        initializeGoogleDrive
       }}
     >
       {children}

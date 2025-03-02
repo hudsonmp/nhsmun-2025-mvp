@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from './AuthContext';
+import { supabase } from '@/lib/supabase';
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
 export const AuthGuard = ({ children }: AuthGuardProps) => {
-  const { isAuthenticated, loading, checkAuth } = useAuth();
+  const { isAuthenticated, loading, user, checkAuth } = useAuth();
   const [isChecking, setIsChecking] = useState(true);
   const router = useRouter();
 
@@ -18,10 +19,21 @@ export const AuthGuard = ({ children }: AuthGuardProps) => {
       if (loading) return;
       
       try {
-        const isAuth = await checkAuth();
+        // First check context auth state
+        if (isAuthenticated && user) {
+          setIsChecking(false);
+          return; // Already authenticated in context
+        }
         
-        if (!isAuth) {
-          // Redirect to login if not authenticated
+        // Double-check with Supabase directly as a fallback
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          // Session exists in Supabase, update context
+          await checkAuth();
+          setIsChecking(false);
+        } else {
+          // No active session, redirect to login
+          console.log('No authenticated session found, redirecting to login');
           router.push('/auth');
         }
       } finally {
@@ -30,7 +42,7 @@ export const AuthGuard = ({ children }: AuthGuardProps) => {
     };
 
     verifyAuth();
-  }, [loading, checkAuth, router]);
+  }, [loading, isAuthenticated, user, checkAuth, router]);
 
   // Show loading state if checking auth status
   if (loading || isChecking) {

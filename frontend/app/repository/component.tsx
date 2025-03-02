@@ -3,16 +3,11 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Document, DocumentFilters } from '@/types/document';
-import { documentsAPI } from '@/lib/api';
-import { 
-  loadGoogleApi, 
-  isGoogleAuthenticated, 
-  signInWithGoogle, 
-  signOutFromGoogle, 
-  listDriveFiles,
-  checkGoogleDriveConfig
-} from '@/lib/googleDrive';
+import { Document, DocumentFilters, DocumentType, CommitteeType } from '@/lib/document';
+import { useAuth } from '@/lib/context/AuthContext';
+import { toast } from 'react-hot-toast';
+import { googleDriveService } from '@/lib/googleDrive';
+import { documentAPI } from '@/lib/supabase';
 
 /**
  * Repository Component for MUN Connect
@@ -22,13 +17,19 @@ import {
  * - Document details view
  * - Document format checking
  * - Search functionality
- * - Google Drive integration
  */
+
+// Extend Document type to include drive-related fields
+interface DocumentWithDrive extends Document {
+  drive_web_link?: string;
+  drive_metadata?: any;
+}
+
 export default function RepositoryComponent() {
-  // State Management
+  const { user, logout, isGoogleDriveAuthenticated, authenticateGoogleDrive } = useAuth();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<DocumentWithDrive[]>([]);
   const [filters, setFilters] = useState<DocumentFilters>({
     type: 'all',
     committee: 'all',
@@ -37,126 +38,70 @@ export default function RepositoryComponent() {
   });
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [showFormatCheck, setShowFormatCheck] = useState(false);
-  const [isGDriveConnected, setIsGDriveConnected] = useState(false);
-  const [gDriveDocuments, setGDriveDocuments] = useState<any[]>([]);
-  const [isImportingFromDrive, setIsImportingFromDrive] = useState(false);
-  const [gDriveStatusMessage, setGDriveStatusMessage] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newDocument, setNewDocument] = useState({
+    title: '',
+    type: 'position_paper' as DocumentType,
+    committee: 'UNSC' as CommitteeType,
+    country: '',
+    topic: '',
+  });
+  const [isCreating, setIsCreating] = useState(false);
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
 
-  // Mock data for development and demos
-  const committees = ['UNSC', 'UNHRC', 'UNEP', 'DISEC', 'WHO', 'ECOSOC'];
+  // Reference data
+  const committees = ['UNSC', 'UNHRC', 'UNEP', 'DISEC', 'WHO', 'ECOSOC'] as const;
   const countries = ['United States', 'China', 'Russia', 'United Kingdom', 'France', 'Germany', 'India', 'Brazil'];
+  const documentTypes = ['position_paper', 'resolution', 'speech', 'research'] as const;
   
-  // Sample documents data
-  const mockDocuments: Document[] = [
-    {
-      id: '1',
-      title: 'Climate Change Position Paper',
-      type: 'position_paper',
-      committee: 'UNEP',
-      country: 'Sweden',
-      topic: 'Climate Change',
-      created_at: '2025-02-15T12:00:00Z',
-      user: { id: '101', email: 'alex@example.com', username: 'alexj', name: 'Alex Johnson' },
-      format_status: 'valid',
-    },
-    {
-      id: '2',
-      title: 'Draft Resolution on Refugee Rights',
-      type: 'resolution',
-      committee: 'UNHRC',
-      country: 'Germany',
-      topic: 'Refugee Rights',
-      created_at: '2025-02-10T14:30:00Z',
-      user: { id: '102', email: 'sarah@example.com', username: 'sarahp', name: 'Sarah Park' },
-      format_status: 'valid',
-    },
-    {
-      id: '3',
-      title: 'Position Paper on Nuclear Disarmament',
-      type: 'position_paper',
-      committee: 'DISEC',
-      country: 'Japan',
-      topic: 'Nuclear Disarmament',
-      created_at: '2025-02-08T09:15:00Z',
-      user: { id: '103', email: 'raj@example.com', username: 'rajp', name: 'Raj Patel' },
-      format_status: 'issues',
-    },
-    {
-      id: '4',
-      title: 'Economic Development Resolution',
-      type: 'resolution',
-      committee: 'ECOSOC',
-      country: 'Brazil',
-      topic: 'Economic Development',
-      created_at: '2025-02-05T16:45:00Z',
-      user: { id: '104', email: 'maria@example.com', username: 'mariar', name: 'Maria Rodriguez' },
-      format_status: 'valid',
-    },
-    {
-      id: '5',
-      title: 'Global Health Crisis Response',
-      type: 'position_paper',
-      committee: 'WHO',
-      country: 'France',
-      topic: 'Pandemic Preparedness',
-      created_at: '2025-02-01T11:30:00Z',
-      user: { id: '105', email: 'jean@example.com', username: 'jeand', name: 'Jean Dupont' },
-      format_status: 'issues',
-    },
-  ];
-
-  // Load documents (simulating API fetch)
-  useEffect(() => {
-    const loadData = async () => {
-      // In a real app, this would be a fetch call to an API endpoint
-      // Example: const response = await fetch('/api/documents');
-      // const data = await response.json();
+  // Load documents from API
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
       
-      // Simulate API delay
-      setTimeout(() => {
-        setDocuments(mockDocuments);
-        setIsLoading(false);
-      }, 1000);
-
-      // Check if user has previously connected to Google Drive
-      const driveConnected = localStorage.getItem('gdriveConnected') === 'true';
-      setIsGDriveConnected(driveConnected);
-      
-      // If connected, we would fetch the list of documents from Google Drive
-      if (driveConnected) {
-        fetchGoogleDriveDocuments();
-      }
-    };
-
-    loadData();
-  }, []);
-
-  // Initialize Google API
-  useEffect(() => {
-    // Check if Google Drive was previously connected
-    const wasConnected = localStorage.getItem('gdriveConnected') === 'true';
-    if (wasConnected) {
-      setIsGDriveConnected(true);
-      
-      // Load Google API and fetch documents
-      const initGoogleApi = async () => {
-        try {
-          await loadGoogleApi();
-          if (isGoogleAuthenticated()) {
-            await fetchGoogleDriveDocuments();
-          }
-        } catch (error) {
-          console.error('Error initializing Google API:', error);
-          // If there was an error with the API, reset the connection state
-          setIsGDriveConnected(false);
-          localStorage.removeItem('gdriveConnected');
-          alert('There was an error connecting to Google Drive. Please try reconnecting.');
+      // Check Google Drive authentication first
+      if (!isGoogleDriveAuthenticated) {
+        const authenticated = await authenticateGoogleDrive();
+        if (!authenticated) {
+          throw new Error('Please connect Google Drive to your MUN Connect profile first');
         }
-      };
+      }
+
+      // Fetch documents from Supabase
+      const docs = await documentAPI.getDocuments();
       
-      initGoogleApi();
+      // Fetch Google Drive metadata for each document
+      const docsWithMetadata = await Promise.all(
+        docs.map(async (doc) => {
+          if (doc.drive_file_id) {
+            try {
+              const driveData = await googleDriveService.getGoogleDoc(doc.drive_file_id);
+              return {
+                ...doc,
+                drive_metadata: driveData,
+              };
+            } catch (error) {
+              console.warn(`Failed to fetch Google Drive metadata for doc ${doc.id}:`, error);
+              return doc;
+            }
+          }
+          return doc;
+        })
+      );
+
+      setDocuments(docsWithMetadata);
+    } catch (error: any) {
+      console.error('Error loading documents:', error);
+      toast.error(error.message || 'Failed to load documents');
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [isGoogleDriveAuthenticated, authenticateGoogleDrive]);
 
   // Handle filter changes
   const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -187,10 +132,7 @@ export default function RepositoryComponent() {
   // Handle format check request
   const handleFormatCheck = () => {
     setShowFormatCheck(true);
-    // In a real app, this would call an AI format checking API
-    // Example: const response = await fetch(`/api/format-check/${selectedDoc.id}`);
-    
-    // Simulate AI processing delay
+    // In a real app, this would call an API
     setTimeout(() => {
       setShowFormatCheck(false);
       
@@ -202,7 +144,6 @@ export default function RepositoryComponent() {
         };
         setSelectedDoc(updatedDoc);
         
-        // Also update in the documents list
         setDocuments((docs) => 
           docs.map((d) => d.id === updatedDoc.id ? updatedDoc : d)
         );
@@ -220,491 +161,692 @@ export default function RepositoryComponent() {
     });
   };
 
-  // Connect to Google Drive
-  const connectToGoogleDrive = async () => {
-    setGDriveStatusMessage('Connecting to Google Drive...');
-    
+  const handleLogout = async () => {
     try {
-      // First check if the Google Drive API is properly configured
-      const config = await checkGoogleDriveConfig();
-      if (!config.isConfigured) {
-        setGDriveStatusMessage('Google Drive API is not properly configured. Please check your API keys.');
-        console.error('Google Drive configuration issues:', config.errors);
-        return;
-      }
-      
-      console.log('Initializing Google API...');
-      await loadGoogleApi();
-      
-      if (!window.gapi || !window.gapi.auth2) {
-        setGDriveStatusMessage('Failed to load Google API. Please try again later.');
-        return;
-      }
-      
-      setGDriveStatusMessage('Authenticating with Google...');
-      // Sign in with Google
-      await signInWithGoogle();
-      
-      // Check if authentication was successful
-      if (isGoogleAuthenticated()) {
-        setIsGDriveConnected(true);
-        setGDriveStatusMessage('Connected to Google Drive');
-        
-        // Fetch Google Drive documents
-        await fetchGoogleDriveDocuments();
-      } else {
-        setGDriveStatusMessage('Google authentication failed. Please try again.');
-      }
-    } catch (error: any) {
-      console.error('Error connecting to Google Drive:', error);
-      setGDriveStatusMessage(`Failed to connect to Google Drive: ${error.message || 'Unknown error'}. Please try again.`);
-    }
-  };
-
-  const disconnectGoogleDrive = async () => {
-    try {
-      // Sign out from Google
-      if (isGoogleAuthenticated()) {
-        await signOutFromGoogle();
-      }
-      
-      setIsGDriveConnected(false);
-      setGDriveDocuments([]);
-      localStorage.removeItem('gdriveConnected');
+      await logout();
     } catch (error) {
-      console.error('Error disconnecting from Google Drive:', error);
+      console.error('Error logging out:', error);
     }
   };
 
-  // Fetch documents from Google Drive
-  const fetchGoogleDriveDocuments = async () => {
-    if (!isGoogleAuthenticated()) {
-      setGDriveStatusMessage('Not authenticated with Google. Please connect first.');
-      return;
-    }
-    
-    try {
-      setIsImportingFromDrive(true);
-      setGDriveStatusMessage('Fetching documents from Google Drive...');
-      
-      // Query Google Drive for documents (MIME types for common document formats)
-      const driveFiles = await listDriveFiles(
-        "mimeType='application/vnd.google-apps.document' or " +
-        "mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or " +
-        "mimeType='application/pdf' or " +
-        "mimeType='application/msword'"
-      );
-      
-      // Make sure we have an array of files
-      const filesArray = Array.isArray(driveFiles) ? driveFiles : [];
-      setGDriveDocuments(filesArray);
-      setGDriveStatusMessage(`Found ${filesArray.length} documents in Google Drive`);
-    } catch (error: any) {
-      console.error('Error fetching Google Drive documents:', error);
-      setGDriveStatusMessage(`Failed to fetch Google Drive documents: ${error.message || 'Unknown error'}`);
-    } finally {
-      setIsImportingFromDrive(false);
-    }
-  };
+  // Handle new document creation
+  const handleCreateDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreating(true);
 
-  const importFromGoogleDrive = async (driveFileId: string, fileName: string) => {
-    // In a real implementation, this would download the file from Google Drive
-    // and then upload it to your own backend
-    console.log(`Importing file ${fileName} (${driveFileId}) from Google Drive...`);
-    setIsImportingFromDrive(true);
-    
     try {
-      // Create a FormData object for the document
-      const formData = new FormData();
-      formData.append('title', fileName.replace(/\.(docx|pdf|txt)$/i, ''));
-      formData.append('type', fileName.toLowerCase().includes('resolution') ? 'resolution' : 'position_paper');
-      formData.append('committee', fileName.includes('UNSC') ? 'UNSC' : 
-                fileName.includes('ECOSOC') ? 'ECOSOC' : 'UNEP');
-      formData.append('country', 'United States'); // Default, would be determined by file content in real app
-      formData.append('topic', fileName.includes('Climate') ? 'Climate Action' : 'General');
-      formData.append('driveFileId', driveFileId);
-      
-      // Create the document in your database
-      const result = await documentsAPI.createDocument(formData);
-      
-      // Add the new document to the list
-      if (result && result[0]) {
-        setDocuments(prev => [result[0], ...prev]);
+      // First create the document in Supabase
+      const doc = await documentAPI.createDocument({
+        ...newDocument,
+        file_type: 'gdoc',
+        create_google_doc: true
+      });
+
+      // Check if already authenticated, if not, authenticate
+      if (!isGoogleDriveAuthenticated) {
+        const authenticated = await authenticateGoogleDrive();
+        if (!authenticated) {
+          throw new Error('Please connect Google Drive to your MUN Connect profile first');
+        }
       }
       
-      // Show success message
-      alert(`Successfully imported "${fileName}" from Google Drive`);
-    } catch (error) {
-      console.error('Error importing from Google Drive:', error);
-      alert('Failed to import document from Google Drive.');
+      // Create the Google Doc
+      const { id: googleDocId, webViewLink } = await googleDriveService.createGoogleDoc({
+        ...doc,
+        user: {
+          id: user?.id || '',
+          email: user?.email || '',
+          username: user?.email || 'unknown',
+          name: user?.email?.split('@')[0] || 'Unknown User'
+        }
+      });
+
+      // Update the document with Google Doc ID and link
+      await documentAPI.updateDocument(doc.id, {
+        drive_file_id: googleDocId,
+        drive_web_link: webViewLink,
+        sync_status: 'synced',
+        last_synced: new Date().toISOString()
+      });
+
+      toast.success('Document created successfully');
+      setIsCreateModalOpen(false);
+      loadData(); // Refresh the documents list
+    } catch (error: any) {
+      console.error('Failed to create document:', error);
+      toast.error(error.message || 'Failed to create document');
     } finally {
-      setIsImportingFromDrive(false);
+      setIsCreating(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Main content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Document Repository</h1>
-          <div className="flex space-x-4">
-            <Link
-              href="/"
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+        <div className="md:flex md:items-center md:justify-between">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+              Document Repository
+            </h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Access and manage Model UN documents, including position papers and resolutions
+            </p>
+          </div>
+          <div className="mt-4 flex md:mt-0 md:ml-4">
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="mr-3 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
             >
-              <svg className="-ml-1 mr-2 h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              Home
-            </Link>
+              Create in Google Docs
+            </button>
             <Link
               href="/repository/upload"
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              <svg className="-ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              New Document
+              Upload Document
             </Link>
           </div>
         </div>
 
-        {/* Main Content */}
-        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-          <div className="px-4 py-6 sm:px-0">
-            <div className="flex flex-col lg:flex-row">
-              {/* Left sidebar - filters */}
-              <div className="w-full lg:w-64 mb-6 lg:mb-0">
-                <div className="bg-white shadow rounded-lg p-4 sticky top-6">
-                  <h2 className="text-lg font-medium text-gray-900 mb-4">Filters</h2>
-                  
-                  {/* Document Type Filter */}
-                  <div className="mb-4">
-                    <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">
-                      Document Type
-                    </label>
-                    <select
-                      id="type"
-                      name="type"
-                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                      value={filters.type}
-                      onChange={handleFilterChange}
-                    >
-                      <option value="all">All Types</option>
-                      <option value="position_paper">Position Papers</option>
-                      <option value="resolution">Resolutions</option>
-                      <option value="amendment">Amendments</option>
-                    </select>
-                  </div>
-                  
-                  {/* Committee Filter */}
-                  <div className="mb-4">
-                    <label htmlFor="committee" className="block text-sm font-medium text-gray-700 mb-1">
-                      Committee
-                    </label>
-                    <select
-                      id="committee"
-                      name="committee"
-                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                      value={filters.committee}
-                      onChange={handleFilterChange}
-                    >
-                      <option value="all">All Committees</option>
-                      {committees.map((committee) => (
-                        <option key={committee} value={committee}>
-                          {committee}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  {/* Country Filter */}
-                  <div className="mb-4">
-                    <label htmlFor="country" className="block text-sm font-medium text-gray-700 mb-1">
-                      Country
-                    </label>
-                    <select
-                      id="country"
-                      name="country"
-                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                      value={filters.country}
-                      onChange={handleFilterChange}
-                    >
-                      <option value="all">All Countries</option>
-                      {countries.map((country) => (
-                        <option key={country} value={country}>
-                          {country}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  {/* Search Query */}
-                  <div className="mb-4">
-                    <label htmlFor="searchQuery" className="block text-sm font-medium text-gray-700 mb-1">
-                      Search
-                    </label>
-                    <div className="mt-1 relative rounded-md shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg className="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                      </div>
-                      <input
-                        type="text"
-                        name="searchQuery"
-                        id="searchQuery"
-                        className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-10 pr-3 py-2 sm:text-sm border-gray-300 rounded-md"
-                        placeholder="Search by title or topic"
-                        value={filters.searchQuery}
-                        onChange={handleFilterChange}
-                      />
+        <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-3">
+          {/* Filters Panel */}
+          <div className="bg-white shadow overflow-hidden rounded-lg">
+            <div className="px-4 py-5 sm:p-6">
+              <h2 className="text-lg font-medium text-gray-900">Filters</h2>
+              
+              <div className="mt-6 space-y-6">
+                {/* Search Query */}
+                <div>
+                  <label htmlFor="searchQuery" className="block text-sm font-medium text-gray-700">
+                    Search
+                  </label>
+                  <div className="mt-1 relative rounded-md shadow-sm">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
                     </div>
+                    <input
+                      type="text"
+                      name="searchQuery"
+                      id="searchQuery"
+                      className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-10 pr-12 sm:text-sm border-gray-300 rounded-md"
+                      placeholder="Search by title or topic"
+                      value={filters.searchQuery}
+                      onChange={handleFilterChange}
+                    />
                   </div>
-                  
-                  {/* Reset Filters Button */}
-                  <button
-                    type="button"
-                    onClick={resetFilters}
-                    className="w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                </div>
+                
+                {/* Document Type Filter */}
+                <div>
+                  <label htmlFor="type" className="block text-sm font-medium text-gray-700">
+                    Document Type
+                  </label>
+                  <select
+                    id="type"
+                    name="type"
+                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    value={filters.type}
+                    onChange={handleFilterChange}
                   >
-                    <svg className="h-5 w-5 mr-2 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Reset Filters
-                  </button>
-
-                  {/* Google Drive Section */}
-                  <div className="mt-6 border-t border-gray-200 pt-4">
-                    <h3 className="text-md font-medium text-gray-900 mb-3">Google Drive</h3>
-                    
-                    {/* Google Drive Status Message */}
-                    {gDriveStatusMessage && (
-                      <div className={`mb-3 px-3 py-2 rounded text-sm ${
-                        gDriveStatusMessage.startsWith('Error') 
-                          ? 'bg-red-50 text-red-700' 
-                          : gDriveStatusMessage.startsWith('Successfully') 
-                            ? 'bg-green-50 text-green-700'
-                            : 'bg-blue-50 text-blue-700'
-                      }`}>
-                        {gDriveStatusMessage}
-                      </div>
-                    )}
-                    
-                    {!isGDriveConnected ? (
-                      <button
-                        onClick={connectToGoogleDrive}
-                        className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                      >
-                        <svg className="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm-2.917 16.083c-2.258 0-4.083-1.825-4.083-4.083s1.825-4.083 4.083-4.083c1.103 0 2.024.402 2.735 1.067l-1.107 1.068c-.304-.292-.834-.63-1.628-.63-1.394 0-2.531 1.155-2.531 2.579 0 1.424 1.138 2.579 2.531 2.579 1.616 0 2.224-1.162 2.316-1.762h-2.316v-1.4h3.855c.036.204.064.401.064.677 0 2.332-1.563 3.988-3.919 3.988zm9.917-3.5h-1.75v1.75h-1.167v-1.75h-1.75v-1.166h1.75v-1.75h1.167v1.75h1.75v1.166z" />
-                        </svg>
-                        Connect to Google Drive
-                      </button>
-                    ) : (
-                      <button
-                        onClick={disconnectGoogleDrive}
-                        className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                      >
-                        Disconnect from Google Drive
-                      </button>
-                    )}
-                  </div>
+                    <option value="all">All Types</option>
+                    {documentTypes.map((type: DocumentType) => (
+                      <option key={type} value={type}>{type.replace('_', ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase())}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-
-              {/* Main content area */}
-              <div className="lg:flex-1 lg:ml-8">
-                {/* Document list */}
-                <div className="bg-white shadow rounded-lg">
-                  <div className="px-4 py-5 sm:p-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-4">Documents</h2>
-                    
-                    {isLoading ? (
-                      <div className="flex justify-center items-center py-12">
-                        <svg className="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </div>
-                    ) : (
-                      <>
-                        {documents.length === 0 ? (
-                          <div className="text-center py-12">
-                            <svg className="mx-auto h-12 w-12 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            <h3 className="mt-2 text-sm font-medium text-gray-900">No documents found</h3>
-                            <p className="mt-1 text-sm text-gray-500">Get started by uploading your first document.</p>
-                            <div className="mt-6">
-                              <Link
-                                href="/repository/upload"
-                                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                              >
-                                <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                </svg>
-                                Upload Document
-                              </Link>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="overflow-hidden">
-                            <ul className="divide-y divide-gray-200">
-                              {documents.map((doc) => (
-                                <DocumentListItem
-                                  key={doc.id}
-                                  document={doc}
-                                  isSelected={selectedDoc?.id === doc.id}
-                                  onClick={() => handleDocumentClick(doc)}
-                                />
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
+                
+                {/* Committee Filter */}
+                <div>
+                  <label htmlFor="committee" className="block text-sm font-medium text-gray-700">
+                    Committee
+                  </label>
+                  <select
+                    id="committee"
+                    name="committee"
+                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    value={filters.committee}
+                    onChange={handleFilterChange}
+                  >
+                    <option value="all">All Committees</option>
+                    {committees.map((committee: CommitteeType) => (
+                      <option key={committee} value={committee}>{committee}</option>
+                    ))}
+                  </select>
                 </div>
-
-                {/* Document details panel */}
-                {selectedDoc && (
-                  <div className="mt-8 bg-white shadow rounded-lg">
-                    <div className="px-4 py-5 sm:p-6">
-                      <div className="flex justify-between items-start">
-                        <h2 className="text-lg font-medium text-gray-900 mb-4">Document Details</h2>
-                        <div>
-                          <button
-                            onClick={handleFormatCheck}
-                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                          >
-                            Check Format
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 border-t border-gray-200 pt-4">
-                        <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Title</dt>
-                            <dd className="mt-1 text-sm text-gray-900">{selectedDoc.title}</dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Type</dt>
-                            <dd className="mt-1 text-sm text-gray-900">
-                              {selectedDoc.type === 'position_paper' ? 'Position Paper' : 
-                               selectedDoc.type === 'resolution' ? 'Resolution' : 
-                               selectedDoc.type === 'amendment' ? 'Amendment' : selectedDoc.type}
-                            </dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Committee</dt>
-                            <dd className="mt-1 text-sm text-gray-900">{selectedDoc.committee}</dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Country</dt>
-                            <dd className="mt-1 text-sm text-gray-900">{selectedDoc.country}</dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Topic</dt>
-                            <dd className="mt-1 text-sm text-gray-900">{selectedDoc.topic}</dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Created By</dt>
-                            <dd className="mt-1 text-sm text-gray-900">{selectedDoc.user.name}</dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Created At</dt>
-                            <dd className="mt-1 text-sm text-gray-900">
-                              {new Date(selectedDoc.created_at).toLocaleDateString()}
-                            </dd>
-                          </div>
-                          <div className="sm:col-span-1">
-                            <dt className="text-sm font-medium text-gray-500">Format Status</dt>
-                            <dd className="mt-1 text-sm text-gray-900">
-                              <FormatStatus status={selectedDoc.format_status} />
-                            </dd>
-                          </div>
-                        </dl>
-                      </div>
-
-                      {showFormatCheck && (
-                        <div className="mt-6 bg-gray-50 p-4 rounded-md">
-                          <h3 className="text-md font-medium text-gray-900 mb-2">Format Check Results</h3>
-                          <FormatStatus status={selectedDoc.format_status} />
-                        </div>
-                      )}
-
-                      <div className="mt-6 flex justify-end space-x-3">
-                        <button
-                          type="button"
-                          className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          Download
-                        </button>
-                        <button
-                          type="button"
-                          className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                
+                {/* Country Filter */}
+                <div>
+                  <label htmlFor="country" className="block text-sm font-medium text-gray-700">
+                    Country
+                  </label>
+                  <select
+                    id="country"
+                    name="country"
+                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    value={filters.country}
+                    onChange={handleFilterChange}
+                  >
+                    <option value="all">All Countries</option>
+                    {countries.map((country) => (
+                      <option key={country} value={country}>{country}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                {/* Reset Filters Button */}
+                <button
+                  type="button"
+                  className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  onClick={resetFilters}
+                >
+                  Reset Filters
+                </button>
               </div>
             </div>
           </div>
-        </main>
+
+          {/* Main Content Area */}
+          <div className="lg:col-span-2">
+            {/* Document List */}
+            <div className="bg-white shadow overflow-hidden sm:rounded-md">
+              <div className="border-b border-gray-200 px-4 py-4 sm:px-6">
+                <h2 className="text-lg font-medium text-gray-900">Documents</h2>
+                {filteredDocuments.length > 0 ? (
+                  <p className="mt-1 text-sm text-gray-500">
+                    Showing {filteredDocuments.length} {filteredDocuments.length === 1 ? 'document' : 'documents'}
+                  </p>
+                ) : null}
+              </div>
+              
+              {/* Loading State */}
+              {isLoading ? (
+                <div className="px-4 py-6 sm:px-6 text-center">
+                  <div className="inline-flex items-center px-4 py-2 font-semibold leading-6 text-sm text-gray-500">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Loading documents...
+                  </div>
+                </div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="px-4 py-12 sm:px-6 text-center bg-white">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No documents found</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Get started by uploading your first document.
+                  </p>
+                  <div className="mt-6">
+                    <Link
+                      href="/repository/upload"
+                      className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      <svg className="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Upload Document
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-200">
+                  {filteredDocuments.map((doc) => (
+                    <DocumentListItem 
+                      key={doc.id}
+                      document={doc}
+                      isSelected={selectedDoc?.id === doc.id}
+                      onClick={() => handleDocumentClick(doc)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Document Details Panel */}
+            {selectedDoc && (
+              <div className="mt-8 bg-white shadow overflow-hidden rounded-lg">
+                <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      Document Details
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-sm text-gray-500">
+                      {selectedDoc.title}
+                    </p>
+                  </div>
+                  <div className="flex space-x-3">
+                    <button
+                      type="button"
+                      className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      onClick={handleFormatCheck}
+                      disabled={showFormatCheck}
+                    >
+                      {showFormatCheck ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="-ml-1 mr-2 h-4 w-4 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                          Format Check
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      onClick={() => router.push(`/repository/edit/${selectedDoc.id}`)}
+                    >
+                      <svg className="-ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      Edit
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Document Details Data */}
+                <div className="border-t border-gray-200">
+                  <dl>
+                    <div className="bg-gray-50 px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Document Type
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 capitalize">
+                        {selectedDoc.type.replace('_', ' ')}
+                      </dd>
+                    </div>
+                    <div className="bg-white px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Committee
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+                        {selectedDoc.committee}
+                      </dd>
+                    </div>
+                    <div className="bg-gray-50 px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Country
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+                        {selectedDoc.country}
+                      </dd>
+                    </div>
+                    <div className="bg-white px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Topic
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+                        {selectedDoc.topic}
+                      </dd>
+                    </div>
+                    <div className="bg-gray-50 px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Created By
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+                        {selectedDoc.user.name}
+                      </dd>
+                    </div>
+                    <div className="bg-white px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Created At
+                      </dt>
+                      <dd className="mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2">
+                        {new Date(selectedDoc.created_at).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div className="bg-gray-50 px-4 py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                      <dt className="text-sm font-medium text-gray-500">
+                        Format Status
+                      </dt>
+                      <dd className="mt-1 text-sm sm:mt-0 sm:col-span-2">
+                        <FormatStatus status={selectedDoc.format_status} />
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Create Document Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed z-50 inset-0 overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            {/* Background overlay */}
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setIsCreateModalOpen(false)} />
+
+            {/* Center modal */}
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+
+            <div className="relative inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              {/* Close button */}
+              <div className="absolute top-0 right-0 pt-4 pr-4">
+                <button
+                  type="button"
+                  className="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  onClick={() => setIsCreateModalOpen(false)}
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Modal content */}
+              <div>
+                <div className="text-center sm:text-left">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                    Create New Document
+                  </h3>
+                  <p className="mt-2 text-sm text-gray-500">
+                    Enter a title for your new document. Other details can be added later.
+                  </p>
+                </div>
+
+                <form onSubmit={handleCreateDocument} className="mt-5 sm:mx-auto sm:w-full">
+                  <div className="space-y-4">
+                    {/* Title field */}
+                    <div>
+                      <label htmlFor="title" className="block text-sm font-medium text-gray-700">
+                        Document Title <span className="text-red-500">*</span>
+                      </label>
+                      <div className="mt-1">
+                        <input
+                          type="text"
+                          name="title"
+                          id="title"
+                          required
+                          value={newDocument.title}
+                          onChange={(e) => setNewDocument(prev => ({ ...prev, title: e.target.value }))}
+                          className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                          placeholder="Enter document title"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Optional fields in a collapsible section */}
+                    <div className="bg-gray-50 rounded-md p-4">
+                      <button
+                        type="button"
+                        onClick={() => setShowOptionalFields(!showOptionalFields)}
+                        className="flex items-center text-sm text-gray-600 hover:text-gray-900 focus:outline-none"
+                      >
+                        <svg 
+                          className={`h-5 w-5 transform ${showOptionalFields ? 'rotate-90' : ''} transition-transform`}
+                          fill="none" 
+                          viewBox="0 0 24 24" 
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                        <span className="ml-2">Additional Details (Optional)</span>
+                      </button>
+
+                      {showOptionalFields && (
+                        <div className="mt-4 space-y-4">
+                          {/* Document Type */}
+                          <div>
+                            <label htmlFor="type" className="block text-sm font-medium text-gray-700">
+                              Document Type
+                            </label>
+                            <select
+                              id="type"
+                              name="type"
+                              value={newDocument.type}
+                              onChange={(e) => setNewDocument(prev => ({ ...prev, type: e.target.value as DocumentType }))}
+                              className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                            >
+                              {documentTypes.map((docType: DocumentType) => (
+                                <option key={docType} value={docType}>
+                                  {docType.replace('_', ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase())}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Committee */}
+                          <div>
+                            <label htmlFor="committee" className="block text-sm font-medium text-gray-700">
+                              Committee
+                            </label>
+                            <select
+                              id="committee"
+                              name="committee"
+                              value={newDocument.committee}
+                              onChange={(e) => setNewDocument(prev => ({ ...prev, committee: e.target.value as CommitteeType }))}
+                              className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                            >
+                              {committees.map((committee: CommitteeType) => (
+                                <option key={committee} value={committee}>{committee}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Country */}
+                          <div>
+                            <label htmlFor="country" className="block text-sm font-medium text-gray-700">
+                              Country
+                            </label>
+                            <input
+                              type="text"
+                              name="country"
+                              id="country"
+                              value={newDocument.country}
+                              onChange={(e) => setNewDocument(prev => ({ ...prev, country: e.target.value }))}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            />
+                          </div>
+
+                          {/* Topic */}
+                          <div>
+                            <label htmlFor="topic" className="block text-sm font-medium text-gray-700">
+                              Topic
+                            </label>
+                            <input
+                              type="text"
+                              name="topic"
+                              id="topic"
+                              value={newDocument.topic}
+                              onChange={(e) => setNewDocument(prev => ({ ...prev, topic: e.target.value }))}
+                              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Form Actions */}
+                  <div className="mt-5 sm:mt-6 sm:grid sm:grid-cols-2 sm:gap-3 sm:grid-flow-row-dense">
+                    <button
+                      type="submit"
+                      disabled={isCreating}
+                      className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2 sm:text-sm disabled:bg-blue-400"
+                    >
+                      {isCreating ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Creating...
+                        </>
+                      ) : 'Create Document'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsCreateModalOpen(false)}
+                      className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1 sm:text-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /**
  * Document List Item Component
- * Displays a single document in the list with its metadata
+ * Displays a single document in the repository list
  */
 function DocumentListItem({ document, isSelected, onClick }: {
   document: Document;
   isSelected: boolean;
   onClick: () => void;
 }) {
+  // Function to determine document icon based on type
+  const getDocumentIcon = () => {
+    if (document.type === 'position_paper') {
+      return (
+        <svg className="h-12 w-12 text-blue-500 group-hover:text-blue-600 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      );
+    } else if (document.type === 'resolution') {
+      return (
+        <svg className="h-12 w-12 text-indigo-500 group-hover:text-indigo-600 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+        </svg>
+      );
+    } else if (document.type === 'speech') {
+      return (
+        <svg className="h-12 w-12 text-amber-500 group-hover:text-amber-600 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+      );
+    } else {
+      return (
+        <svg className="h-12 w-12 text-gray-500 group-hover:text-gray-600 transition-colors duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        </svg>
+      );
+    }
+  };
+
+  // Format the date to a readable string
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('en-US', { 
+      month: 'short', 
+      day: 'numeric', 
+      year: 'numeric',
+    }).format(date);
+  };
+
   return (
     <li 
-      className={`px-4 py-4 sm:px-6 hover:bg-gray-50 cursor-pointer ${isSelected ? 'bg-blue-50' : ''}`}
-      onClick={onClick}
+      className={`group relative rounded-lg border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 ${
+        isSelected ? 'border-blue-500 bg-blue-50 shadow-sm' : 'bg-white'
+      }`}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center">
+      {/* Main clickable area */}
+      <div 
+        className="p-4 cursor-pointer"
+        onClick={onClick}
+      >
+        <div className="flex items-center space-x-4">
+          {/* Document icon */}
           <div className="flex-shrink-0">
-            {document.type === 'position_paper' ? (
-              <svg className="h-10 w-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            ) : document.type === 'resolution' ? (
-              <svg className="h-10 w-10 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
-            ) : (
-              <svg className="h-10 w-10 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-              </svg>
-            )}
+            {getDocumentIcon()}
           </div>
-          <div className="ml-4">
-            <div className="font-medium text-gray-900">{document.title}</div>
-            <div className="text-sm text-gray-500">
-              {document.committee} • {document.country} • {document.topic}
+          
+          {/* Document metadata */}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-medium text-gray-900 group-hover:text-blue-600 transition-colors duration-200 truncate">
+              {document.title}
+            </h3>
+            <div className="mt-1 flex flex-col sm:flex-row sm:flex-wrap sm:mt-0 sm:space-x-4">
+              <div className="mt-1 flex items-center text-sm text-gray-500">
+                <svg className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                {formatDate(document.created_at)}
+              </div>
+              <div className="mt-1 flex items-center text-sm text-gray-500">
+                <svg className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                {document.committee}
+              </div>
+              <div className="mt-1 flex items-center text-sm text-gray-500">
+                <svg className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {document.country}
+              </div>
+            </div>
+            <div className="mt-2 flex items-center">
+              <FormatStatusBadge status={document.format_status} />
+              
+              {document.topic && (
+                <span className="ml-3 text-xs text-gray-500 truncate">
+                  Topic: {document.topic}
+                </span>
+              )}
             </div>
           </div>
         </div>
-        <div className="flex items-center">
-          <FormatStatusBadge status={document.format_status} />
-          <span className="ml-4 text-sm text-gray-500">
-            {new Date(document.created_at).toLocaleDateString()}
-          </span>
-        </div>
+      </div>
+      
+      {/* Document actions */}
+      <div className="absolute top-3 right-3 flex space-x-2">
+        {document.drive_file_id && (
+          <a 
+            href={`https://docs.google.com/document/d/${document.drive_file_id}/edit`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors duration-200"
+            title="Edit in Google Docs"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </a>
+        )}
+      </div>
+      
+      {/* View button (overlaid at the bottom) */}
+      <div className="absolute bottom-0 right-0 p-2">
+        <Link
+          href={`/repository/document/${document.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+        >
+          <svg className="-ml-0.5 mr-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          View
+        </Link>
       </div>
     </li>
   );

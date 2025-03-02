@@ -1,5 +1,4 @@
 import axios, { AxiosRequestConfig } from 'axios';
-import Cookies from 'js-cookie';
 import { supabase } from './supabase';
 
 // Create an axios instance with default config
@@ -12,8 +11,11 @@ const api = axios.create({
 
 // Add a request interceptor to include the auth token in requests
 api.interceptors.request.use(
-  (config: AxiosRequestConfig) => {
-    const token = Cookies.get('token');
+  async (config: AxiosRequestConfig) => {
+    // Get session token directly from Supabase
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    
     if (token) {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
@@ -76,14 +78,6 @@ export const authAPI = {
         throw error;
       }
       
-      // Store the session in a cookie
-      if (data.session?.access_token) {
-        console.log('Login successful, storing token in cookie');
-        Cookies.set('token', data.session.access_token, { expires: 1 }); // Expires in 1 day
-      } else {
-        console.warn('Login successful but no access token found in response');
-      }
-      
       console.log('Login successful, Supabase response:', 
         data.session ? { 
           user: data.session.user.email,
@@ -109,7 +103,6 @@ export const authAPI = {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      Cookies.remove('token');
     } catch (error) {
       console.error('Logout error:', error);
       throw error;

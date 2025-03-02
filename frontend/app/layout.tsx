@@ -1,7 +1,9 @@
 import './globals.css'
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
-import { AuthProvider } from '@/lib/context/AuthContext'
+import { AuthProvider } from '../lib/context/AuthContext'
+import { Toaster } from 'react-hot-toast'
+import SharedLayout from './components/SharedLayout'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,7 +21,10 @@ export default function RootLayout({
     <html lang="en" className="h-full bg-gray-50">
       <body className={`h-full ${inter.className}`}>
         <AuthProvider>
-          {children}
+          <SharedLayout>
+            {children}
+          </SharedLayout>
+          <Toaster position="top-right" />
         </AuthProvider>
       </body>
     </html>

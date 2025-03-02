@@ -1,5 +1,8 @@
 {
   "/repository/page": "app/repository/page.js",
-  "/auth/page": "app/auth/page.js",
-  "/landing-page/page": "app/landing-page/page.js"
+  "/landing-page/page": "app/landing-page/page.js",
+  "/repository/upload/page": "app/repository/upload/page.js",
+  "/page": "app/page.js",
+  "/research/page": "app/research/page.js",
+  "/repository/document/[documentId]/page": "app/repository/document/[documentId]/page.js"
 }
