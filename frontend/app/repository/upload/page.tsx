@@ -308,7 +308,7 @@ export default function UploadPage() {
             googleDocId = selectedGoogleDoc;
           } else {
             // Create new Google Doc
-            googleDocId = await googleDriveService.createGoogleDoc({
+            const googleDocResponse = await googleDriveService.createGoogleDoc({
               ...document,
               user: {
                 id: user?.id || '',
@@ -317,26 +317,27 @@ export default function UploadPage() {
                 name: user?.email?.split('@')[0] || 'Unknown User'
               }
             });
+            
+            // Get current timestamp for last synced
+            const syncTimestamp = new Date().toISOString();
+            
+            // Update document with Google Doc ID
+            await documentAPI.updateDocument(document.id, {
+              drive_file_id: googleDocResponse.id,
+              drive_web_link: googleDocResponse.webViewLink,
+              format_status: 'pending',
+              sync_status: 'synced',
+              last_synced: syncTimestamp
+            });
+            
+            setSyncStatus('synced');
+            setLastSynced(syncTimestamp);
+            setIsSyncing(false);
+            
+            setUploadProgress(100);
+            setUploadSuccess(true);
+            toast.success('Document created successfully');
           }
-          
-          // Get current timestamp for last synced
-          const syncTimestamp = new Date().toISOString();
-          
-          // Update document with Google Doc ID
-          await documentAPI.updateDocument(document.id, {
-            drive_file_id: googleDocId,
-            format_status: 'pending',
-            sync_status: 'synced',
-            last_synced: syncTimestamp
-          });
-          
-          setSyncStatus('synced');
-          setLastSynced(syncTimestamp);
-          setIsSyncing(false);
-          
-          setUploadProgress(100);
-          setUploadSuccess(true);
-          toast.success('Document created successfully');
         } catch (error: any) {
           setSyncStatus('error');
           setIsSyncing(false);
